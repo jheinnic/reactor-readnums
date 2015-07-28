@@ -1,0 +1,307 @@
+/*
+ * Copyright (c) 2011-2014 Pivotal Software, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+ * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations under the License.
+ */
+
+package info.jchein.apps.nr.codetest.ingest.reusable;
+
+
+import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.google.common.base.Preconditions;
+import com.google.common.base.Verify;
+
+
+/**
+ * {@link reactor.bus.Event} subclass that implements Reusable and therefore can serve as a reference to itself for the
+ * sake of being returned to the {@link StrippedReusableObjectAllocator} pool from which it was previously reserved once
+ * its allocator no longer has use for it.
+ *
+ * When used as an event or messaging payload, it is the allocator's responsibility to ensure that reference counting
+ * will only reach 0 after the last recipient has finished their work. In general, this means that the reusable packages
+ * are not yet appropriate for event/message use cases where the number of actual recipients is unknown when the message
+ * is sent.
+ *
+ * When the number of event/message recipients is known a priori, and is greater than zero, the sender should deduct one
+ * from the number of recipients, call {@link #retain(int)} with that sum, and then skip calling {@link #release()}
+ * after sending the message due to the -1 optimization. This presumes that delivery is reliable and each recipient can
+ * be trusted to call {@link #release()} once for its own use of the message.
+ *
+ * Future enhancements should expand the range of scenarios where the reusable package is a good fit by tapping into the
+ * EventBus's consumer registry and providing an option to utilize that access to set a Reusable's reference count
+ * dynamically rather than requiring the sender have appropriate knowledge about recipient(s) and/or routing behavior of
+ * the EventBus itself.
+ *
+ * @param <T>
+ *           Every concrete subclass should its own class so {@link Reference<T>} can self resolve.
+ * @see ReusableEventAllocator#get(Class)
+ */
+public abstract class AbstractReusableObject<I extends IReusable>
+implements IReusableObjectInternal<I>
+{
+   private static final Logger LOG = LoggerFactory.getLogger(AbstractReusableObject.class);
+
+   // Atomic updater providing atomic access guarantees for reference counter variable, but not responsible for
+   // providing a sufficient memory barrier to share subclass state.
+   @SuppressWarnings("rawtypes")
+   private static AtomicIntegerFieldUpdater<AbstractReusableObject> ATOMIC_REF_COUNT_UPDATE =
+      AtomicIntegerFieldUpdater.newUpdater(AbstractReusableObject.class, "refCnt");
+
+   // An atomic updater for supporting public interface methods that provide concrete subclasses an interface driven
+   // memory barrier without resorting to heavier mutual exclusion locks.  The tradeoff is that it is developer's
+   // responsibility to ensure all write access is single-threaded.  For use cases where a message is written before
+   // being unicast or multicast to reader recipients, this constraint already fits the inherent use pattern.
+   @SuppressWarnings("rawtypes")
+   private static AtomicIntegerFieldUpdater<AbstractReusableObject> ATOMIC_SYNC_BIT_UPDATE =
+      AtomicIntegerFieldUpdater.newUpdater(AbstractReusableObject.class, "syncBit");
+
+   private final OnReturnCallback releaseCallback;
+   private final int poolIndex;
+   private final long inception;
+   private long leasedAt;
+
+   // Reference counter used by public IReusable interface methods to identify the moment it is safe for an instance
+   // to recycle itself back to its original object pool.
+   @SuppressWarnings("unused")
+   private volatile int refCnt = 0;
+
+   // volatile bit solely for the purpose of ensuring memory visibility.  Reference count is not always changed and
+   // read along a pattern that is sufficient to support required memory barrier semantics, but it is possible to
+   // satisfy the necessity of memory barrier semantics when maintaining the reference counter.  Take the example of
+   // a one-to-one exchange.  The sender may be legitimately expected to call afterWrite() and the recipient to
+   // call beforeRead(), but it is unlikely that the sender will call "retain(1); release(1);" to increment the
+   // retention by one to account for the recipient and then decrement it back to the original value to release its
+   // own interest in the object.  Both operations would satisfy the need for a write barrier, but involves an
+   // unnecessary identity calculation of 1 + 1 - 1 = 1 and two writes where only one is needed to satisfy
+   // memory barrier preconditions.
+   //
+   // NOTE: The actual value of this variable is completely meaningless.
+   @SuppressWarnings("unused")
+   private volatile int syncBit = 1;
+
+
+   protected AbstractReusableObject( final OnReturnCallback releaseCallback, final int poolIndex )
+   {
+      super();
+      this.releaseCallback = releaseCallback;
+      this.inception = System.nanoTime();
+      this.poolIndex = poolIndex;
+      this.leasedAt = 0;
+   }
+
+
+   /*
+    * =============================================+ | IReusableObjectInternal Implementation Glue |
+    * +=============================================
+    */
+
+   @Override
+   public final long getInception()
+   {
+      // return TimeUtils.approxCurrentTimeMillis() - inception;
+      return inception;
+   }
+
+
+   @Override
+   public final int getPoolIndex()
+   {
+      return poolIndex;
+   }
+
+
+   @Override
+   public final int reserve()
+   {
+      Verify.verify(
+         ATOMIC_REF_COUNT_UPDATE.get(this) == 0,
+         "Reference count for %s did not equal 0 when its pool called reserve() to honor an allocation request",
+         this);
+
+      boolean updated = false;
+      while ((updated == false) && (ATOMIC_REF_COUNT_UPDATE.get(this) == 0)) {
+         leasedAt = System.nanoTime();
+         updated = ATOMIC_REF_COUNT_UPDATE.compareAndSet(this, 0, 1);
+      }
+
+      Verify.verify(
+         updated,
+         "Reference count for %s became non-zero while handling reserve(), but it was not updated by thread calling reserve().  Lease age may no longer be accurate.",
+         this);
+
+      return ATOMIC_SYNC_BIT_UPDATE.get(this);
+   }
+
+
+   @Override
+   public final void vacate()
+   {
+      // Implementations of recycle() that do any of their work conditional on current state are strongly
+      // discouraged!  If such an implementation is unavoidable, it is the implementor's responsibility to
+      // call beforeRead() at the top of their method's implementation because vacate() does not provide
+      // a load memory barrier on subclass state before calling recycle()!
+      recycle();
+      ATOMIC_REF_COUNT_UPDATE.set(this, 0);
+      ATOMIC_SYNC_BIT_UPDATE.set(this, 1);
+   }
+
+
+   /*
+    * ============================+ | IReusable Public Interface | +============================
+    */
+
+   @Override
+   public final long getAge()
+   {
+      // TODO: Since age should never change during a lease, should this follow a read barrier or just rely
+      // on the one in ReusableObjectAllocator#reserve()?  I'm guessing it should not since since reserve()
+      // only applies to the initial allocator and there is no similar method for "on-received" to reserve()
+      // as an "on-lease" method other than beforeRead() and we cannot enforce when/if that's been called.
+      ATOMIC_REF_COUNT_UPDATE.get(this);
+      return System.nanoTime() - leasedAt;
+   }
+
+
+   @Override
+   public final int getReferenceCount()
+   {
+      return ATOMIC_REF_COUNT_UPDATE.get(this);
+   }
+
+
+   @Override
+   public final void retain()
+   {
+      retain(1);
+   }
+
+
+   @Override
+   public final void retain(final int incr)
+   {
+      Preconditions.checkArgument(incr > 0, "Retention increments must always be positive");
+
+      boolean updated = false;
+      int origRefCnt = ATOMIC_REF_COUNT_UPDATE.get(this);
+      while ((updated == false) && (origRefCnt > 0)) {
+         final int newRefCnt = origRefCnt + incr;
+         Preconditions.checkState(newRefCnt > origRefCnt , "Reference counts may not overflow an integer");
+
+         if (ATOMIC_REF_COUNT_UPDATE.compareAndSet(this, origRefCnt, newRefCnt)) {
+            updated = true;
+         } else {
+            origRefCnt = ATOMIC_REF_COUNT_UPDATE.get(this);
+         }
+      }
+
+      Preconditions.checkState(
+         origRefCnt > 0,
+         "Cannot increase reference count with retain() after reference count has already reached 0 through release()");
+   }
+
+
+   @Override
+   public final void release()
+   {
+      release(1);
+   }
+
+
+   @Override
+   public final void release(final int decr)
+   {
+      Preconditions.checkArgument(
+         decr > 0,
+         "Release() can ony decrement a ReusableObject's reference count by a positive number.");
+
+      boolean updated = false;
+      int origRefCnt = ATOMIC_REF_COUNT_UPDATE.get(this);;
+      while ((updated == false) && (origRefCnt > 0)) {
+         final int newRefCnt = Math.max(0, origRefCnt - decr);
+         Preconditions.checkState(newRefCnt < origRefCnt, "Reference counts may not overflow to an increased value");
+
+         if (ATOMIC_REF_COUNT_UPDATE.compareAndSet(this, origRefCnt, newRefCnt)) {
+            updated = true;
+         } else {
+            origRefCnt = ATOMIC_REF_COUNT_UPDATE.get(this);
+         }
+      }
+
+      if (origRefCnt <= decr) {
+         if ((origRefCnt < decr) && LOG.isWarnEnabled()) {
+            LOG.warn(
+               "Reusable {} has been released more times than it had been retained!  Beware upcoming problems with unexpected event recycling and or non-exclusive allocations!",
+               this);
+         }
+
+         // Recycle and release if this call successfully updated reference counter from a positive value to 0.
+         if (updated) {
+            this.releaseCallback.accept(this.inception);
+         }
+      }
+   }
+
+
+   //-------------- Public and inherited interface for memory barrier effects, constrained solely to one instance of this object.
+
+   /**
+    * Just before sharing an IReusable with another thread, invoke this apparent no-op method to commit any changes you've made since your
+    * last call to this method on this object to memory.  Any thread that calls {@link #beforeRead()} will thereafter be guaranteed to see
+    * the latest state change made before most recent call to {@link #writetTo()}.
+    *
+    * @see #beforeRead()
+    */
+   @Override
+   public AbstractReusableObject<I> afterWrite() {
+      ATOMIC_SYNC_BIT_UPDATE.set(this, 2);
+      return this;
+   }
+
+   /**
+    * Just after receiving an IReusable from another thread, a call to this method will ensure any changes made before other thread called
+    * {@link #afterWrite()} are visible.
+    *
+    * The actual return value of {@link #beforeRead()} has no meaning, it only exists to provide a Load Memory Barrier for a concrete
+    * implementation's defined state.
+    *
+    * @return Nothing of any significance whatsoever.
+    * @see #afterWrite()
+    */
+   @Override
+   public AbstractReusableObject<I> beforeRead() {
+      if (ATOMIC_SYNC_BIT_UPDATE.get(this) == 0) return null;
+
+      return this;
+   }
+
+
+   @Override
+   public final String toString()
+   {
+      return new StringBuilder()
+      .append("ReusableObject{refCnt=")
+      .append(ATOMIC_REF_COUNT_UPDATE.get(this))
+      .append(", poolIndex=")
+      .append(poolIndex)
+      .append(", inception=")
+      .append(inception)
+      .append(", obj=")
+      .append(innerToString())
+      .append('}')
+      .toString();
+   }
+
+
+   protected abstract String innerToString();
+}
