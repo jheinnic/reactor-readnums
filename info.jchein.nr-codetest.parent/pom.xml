@@ -45,7 +45,7 @@
 		<chronicle.version>3.3.2</chronicle.version>
 		<chronicle-logger.version>1.0.2</chronicle-logger.version>
 		<commons-beanutils.version>1.8.3</commons-beanutils.version>
-		<commons-collections.version>3.2.1</commons-collections.version>
+		<commons-collections.version>3.2.2</commons-collections.version>
 		<commons-codec.version>1.6</commons-codec.version>
 		<commons-dbcp.version>1.2.2</commons-dbcp.version>
 		<commons-dbcp2.version>2.0.1</commons-dbcp2.version>
