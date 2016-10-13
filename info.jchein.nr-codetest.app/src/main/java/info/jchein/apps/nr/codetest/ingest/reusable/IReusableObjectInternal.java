@@ -1,7 +1,6 @@
 package info.jchein.apps.nr.codetest.ingest.reusable;
 
 import reactor.core.alloc.Allocator;
-import reactor.core.alloc.Recyclable;
 import reactor.core.alloc.Reference;
 
 /**
@@ -32,7 +31,7 @@ import reactor.core.alloc.Reference;
  * @author John Heinnickel
  */
 public interface IReusableObjectInternal<I extends IReusable>
-extends Recyclable, IReusable
+extends IReusable
 {
    I castToInterface();
    
@@ -48,11 +47,9 @@ extends Recyclable, IReusable
     */
    int reserve();
 
-  /**
-   * 
-   */
-   void vacate();
-   
+
+	int reserve(int incr);
+
    /**
     * Every reusable object is assigned an integer index value on creation. That value is injected through the
     * constructor and this interface method enables a Reusable object pool to retrieve that index back to discern the

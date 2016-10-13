@@ -6,13 +6,15 @@ import com.google.common.base.Preconditions;
 
 import info.jchein.apps.nr.codetest.ingest.config.Constants;
 import info.jchein.apps.nr.codetest.ingest.reusable.AbstractReusableObject;
+import info.jchein.apps.nr.codetest.ingest.reusable.IReusableObjectInternal;
 import info.jchein.apps.nr.codetest.ingest.reusable.OnReturnCallback;
 
 public class InputMessage
-extends AbstractReusableObject<IInputMessage>
+extends AbstractReusableObject<IInputMessage, InputMessage>
 implements IInputMessage
 {
-   private static final OnReturnCallback FLYWEIGHT_ON_RETURN_PLACEHOLDER = (final long l) -> { };
+	private static final OnReturnCallback FLYWEIGHT_ON_RETURN_PLACEHOLDER =
+		(final IReusableObjectInternal<?> l) -> { /* No Operation */ };
    private static final int FLYWEIGHT_POOL_INDEX = -905;
 
    private final IInputMessage.MessageKind kind;
@@ -104,6 +106,13 @@ implements IInputMessage
    }
 
 
+	@Override
+	public InputMessage beforeRead()
+	{
+		return super.beforeRead();
+	}
+
+
    @Override
    public final void setMessagePayload(
       final byte[] bytes, final int messagePrefix, final short messageSuffix, final byte numPartitions )
@@ -116,6 +125,7 @@ implements IInputMessage
       prefix = messagePrefix;
       suffix = messageSuffix;
       partitionIndex = (byte) (messageSuffix % numPartitions);
+		super.afterWrite();
    }
 
 

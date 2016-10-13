@@ -1,8 +1,6 @@
 package info.jchein.apps.nr.codetest.ingest.messages;
 
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -17,7 +15,7 @@ import info.jchein.apps.nr.codetest.ingest.reusable.IReusableAllocator;
 @Import(ParametersConfiguration.class)
 public class EventConfiguration
 {
-   private static final Logger LOG = LoggerFactory.getLogger(ParametersConfiguration.class);
+	// private static final Logger LOG = LoggerFactory.getLogger(ParametersConfiguration.class);
 
    @Autowired
    ParametersConfiguration parametersConfiguration;
@@ -55,14 +53,14 @@ public class EventConfiguration
    }
 
 
-//   @Bean
-//   @Scope("singleton")
-//   public IReusableAllocator<IRawInputBatch> rawInputBatchAllocator()
-//   {
-//      return new RawInputBatchAllocator(
-//         2 * parametersConfiguration.peakUnconsolidatedRawBatchesExpected,
-//         false, parametersConfiguration.flushAfterNInputs);
-//   }
+	@Bean
+	@Scope("singleton")
+	public IReusableAllocator<IRawInputBatch> rawInputBatchAllocator()
+	{
+		return new RawInputBatchAllocator(
+			2 * parametersConfiguration.peakUnconsolidatedRawBatchesExpected, false,
+			parametersConfiguration.flushAfterNInputs + parametersConfiguration.flushOverflowTolerance);
+	}
 
 
    @Bean

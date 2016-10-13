@@ -24,6 +24,7 @@ import info.jchein.apps.nr.codetest.ingest.messages.IInputMessage;
 import info.jchein.apps.nr.codetest.ingest.messages.IWriteFileBuffer;
 import info.jchein.apps.nr.codetest.ingest.perfdata.RingBufferUtils;
 import info.jchein.apps.nr.codetest.ingest.segments.logunique.BatchInputSegment;
+import info.jchein.apps.nr.codetest.ingest.segments.logunique.FillWriteBuffersSegment;
 import info.jchein.apps.nr.codetest.ingest.segments.logunique.PerfCounterSegment;
 import info.jchein.apps.nr.codetest.ingest.segments.logunique.UniqueMessageTrie;
 import info.jchein.apps.nr.codetest.ingest.segments.logunique.WriteOutputFileSegment;
@@ -184,7 +185,7 @@ public class IngestConfiguration
    @Bean
    @Scope("singleton")
    Codec<Buffer, IInputMessage, IInputMessage> codec() {
-      return new DelimitedCodec<IInputMessage,IInputMessage>(
+		return new DelimitedCodec<>(
          true, codecDelegate());
    }
 
@@ -289,8 +290,17 @@ public class IngestConfiguration
          ingestionTimer(),
          uniqueMessageTrie(),
          streamsToMerge(),
-         eventsConfiguration.writeFileBufferAllocator(),
+			eventsConfiguration.rawInputBatchAllocator(),
          fanOutProcessors());
+   }
+   
+   @Bean
+   @Scope("singleton")
+   FillWriteBuffersSegment fillWriteBuffersSegment() {
+   	return new FillWriteBuffersSegment(
+   		lifecycleEventBus(),
+   		batchInputSegment(), 
+   		eventsConfiguration.writeFileBufferAllocator());
    }
 
 
@@ -321,7 +331,7 @@ public class IngestConfiguration
          parametersConfiguration.outputLogFilePath,
          numConcurrentWriters,
          lifecycleEventBus(),
-         batchInputSegment(),
+			fillWriteBuffersSegment(),
          writeOutputFileWorkProcessor(),
          eventsConfiguration.incrementCountersAllocator());
    }

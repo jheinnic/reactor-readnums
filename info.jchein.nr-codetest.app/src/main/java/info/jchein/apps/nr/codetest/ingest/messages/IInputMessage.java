@@ -18,6 +18,15 @@ public interface IInputMessage extends IReusable
    public void setMessagePayload(byte[] msgBytes, int prefix, short suffix, byte dataPartitionCount);
 
 
+	/**
+	 * Read synchronization method to be invoked by consumer thread before using getter methods to ensure visibility of
+	 * content set on any other thread by previous call to {@link #setMessagePayload(byte[], int, short, byte)}.
+	 * 
+	 * @return The self object
+	 */
+	public InputMessage beforeRead();
+
+
    public IInputMessage.MessageKind getKind();
 
 

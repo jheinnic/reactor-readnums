@@ -179,11 +179,11 @@ public class TryBuffer
             computeStream
             .process(writeOutputProcessor)
             .map(writeBuf -> {
-               writeBuf.beforeRead();
+				// writeBuf.beforeRead();
                final ICounterIncrements countIncr =
                   processBatch(writeBuf, fileChannel, fileObject, counterAlloc);
 
-               countIncr.afterWrite();
+				// countIncr.afterWrite();
                return countIncr;
             })
             .retry( t -> {
@@ -327,7 +327,7 @@ public class TryBuffer
       final FileChannel outputChannel, final File outputLogFile,
       final IReusableAllocator<ICounterIncrements> counterIncrementsAllocator)
    {
-      final ByteBuffer buf = batchDef.getBufferToDrain();
+      final ByteBuffer buf = batchDef.getByteBufferToFlush();
       long writeOffset = batchDef.getFileWriteOffset();
 
       try {

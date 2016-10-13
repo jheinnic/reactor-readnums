@@ -89,20 +89,21 @@ extends Codec<Buffer, IInputMessage, IInputMessage>
 
       AllocatedBatch(final int allocationSize, final IReusableAllocator<T> reusableAllocator) {
          this.reusableAllocator = reusableAllocator;
-         currentAllocation = new ArrayList<T>(allocationSize);
-         currentIterator = currentAllocation.iterator();
+			this.currentAllocation = new ArrayList<>(allocationSize);
+			this.currentIterator = this.currentAllocation.iterator();
       }
 
       public boolean isEmpty()
       {
-         return currentIterator.hasNext();
+			return !currentIterator.hasNext();
       }
 
       public void renewAllocation(
          final int batchAllocationSize,
          final IReusableAllocator<T> reusableAllocator)
       {
-         currentAllocation.ensureCapacity(batchAllocationSize);
+			this.currentAllocation.clear();
+			this.currentAllocation.ensureCapacity(batchAllocationSize);
          reusableAllocator.allocateBatch(
             batchAllocationSize, currentAllocation);
          this.currentIterator = currentAllocation.iterator();
@@ -112,8 +113,11 @@ extends Codec<Buffer, IInputMessage, IInputMessage>
       {
          final T retVal = currentIterator.next();
 
-         Verify.verifyNotNull(retVal);
-         Verify.verify(retVal.getReferenceCount() == 1, "%s", retVal);
+			Verify.verifyNotNull(retVal, "Null allocation?");
+			Verify.verify(
+				retVal.getReferenceCount() == 1, 
+				"Reference count was %s, not 1, for %s",
+				retVal.getReferenceCount(), retVal);
          // Verify.verify(retVal.getPrefix() == Integer.MIN_VALUE, "%s", retVal);
 
          return retVal;
@@ -121,16 +125,6 @@ extends Codec<Buffer, IInputMessage, IInputMessage>
    }
 
 
-   /**
-    * Convert a valid NINE_DIGITS message buffer to its integer value. This method must ONLY be called with inputs that
-    * satisfy a constraint where {@link #isValidMsg(byte[])} == {@link MessageSyntaxType#NINE_DIGITS}
-    *
-    * @param msgBuf
-    * @return
-    */
-
-      }
-   }
 
    public InputMessageCodec(
       final byte dataPartitionCount,
@@ -145,7 +139,8 @@ extends Codec<Buffer, IInputMessage, IInputMessage>
          new ThreadLocal<AllocatedBatch<IInputMessage>>() {
             @Override
             protected AllocatedBatch<IInputMessage> initialValue() {
-               return new AllocatedBatch<IInputMessage>(nineDigitBatchAllocationSize);
+				return new AllocatedBatch<>(
+					nineDigitBatchAllocationSize, inputMessageAllocator);
             }
          };
    }
@@ -250,7 +245,6 @@ extends Codec<Buffer, IInputMessage, IInputMessage>
             retVal = allocateNextMessage();
             retVal.setMessagePayload(
                msgBuf, prefix, suffix, dataPartitionCount);
-            retVal.afterWrite();
 
             // Every thread in the input batch pool will examine this message, and only one will accept it.  For this to work, the
             // message must be retained long enough for every thread to have a chance to see it, not only the one that accepts it.
@@ -281,6 +275,17 @@ extends Codec<Buffer, IInputMessage, IInputMessage>
          reservations.renewAllocation(
             nineDigitBatchAllocationSize, inputMessageAllocator);
       }
+		return reservations.allocateNext();
+	}
+
+
+	/**
+	 * Convert a valid NINE_DIGITS message buffer to its integer value. This method must ONLY be called with inputs that
+	 * satisfy a constraint where {@link #isValidMsg(byte[])} == {@link MessageSyntaxType#NINE_DIGITS}
+	 *
+	 * @param msgBuf
+	 * @return
+	 */
    static int getIntFromBytes(final byte[] msgBuf)
    {
       int retVal = 0;

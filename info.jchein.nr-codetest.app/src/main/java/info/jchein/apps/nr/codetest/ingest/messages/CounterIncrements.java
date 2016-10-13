@@ -4,7 +4,7 @@ import info.jchein.apps.nr.codetest.ingest.reusable.AbstractReusableObject;
 import info.jchein.apps.nr.codetest.ingest.reusable.OnReturnCallback;
 
 public class CounterIncrements
-extends AbstractReusableObject<ICounterIncrements>
+extends AbstractReusableObject<ICounterIncrements, CounterIncrements>
 implements ICounterIncrements
 {
    public int deltaUniques;
@@ -25,11 +25,20 @@ implements ICounterIncrements
 
 
    @Override
-   public final CounterIncrements setDeltas( final int deltaUniques, final int deltaDuplicates ) {
+	public final CounterIncrements setDeltas(final IWriteFileBuffer fromBuffer)
+	{
+		assert fromBuffer != null;
+		fromBuffer.loadCounterDeltas(this);
+		return this.afterWrite();
+	}
+
+
+	@Override
+	public final CounterIncrements setDeltas(final int deltaUniques, final int deltaDuplicates)
+	{
       this.deltaUniques = deltaUniques;
       this.deltaDuplicates = deltaDuplicates;
-
-      return this;
+		return this.afterWrite();
    }
 
 
@@ -45,6 +54,7 @@ implements ICounterIncrements
    @Override
    public CounterIncrements incrementDeltas(final ICounterIncrements absorbedCounters)
    {
+		absorbedCounters.beforeRead();
       deltaUniques += absorbedCounters.getDeltaUniques();
       deltaDuplicates += absorbedCounters.getDeltaDuplicates();
 
@@ -85,4 +95,11 @@ implements ICounterIncrements
       .append("]")
       .toString();
    }
+
+
+	@Override
+	public CounterIncrements beforeRead()
+	{
+		return super.beforeRead();
+	}
 }

@@ -11,7 +11,7 @@ my($socket, $client_socket);
 # creates socket, binds and connects to TCP server on specific port.
 $socket = new IO::Socket::INET (
 PeerHost => '127.0.0.1',
-PeerPort => '5000',
+PeerPort => '4000',
 Proto => 'tcp',
 ) or die "ERROR in Socket Creation : $!\n";
 

@@ -14,6 +14,8 @@
 package info.jchein.apps.nr.codetest.ingest.messages;
 
 
+import java.util.concurrent.atomic.AtomicLong;
+
 import org.springframework.stereotype.Component;
 
 import info.jchein.apps.nr.codetest.ingest.config.Constants;
@@ -51,7 +53,7 @@ extends ReusableObjectAllocator<IWriteFileBuffer, WriteFileBuffer>
    public static boolean POOL_SIZE_FIXED = DEFAULT_IS_POOL_FIXED;
    public static int BUFFER_SIZE_IN_MESSAGES = Constants.DEFAULT_MAX_MESSAGES_PER_FLUSH;
 
-   private long nextFileWriteOffset = 0;
+	private final AtomicLong nextFileWriteOffset;
 
    public static V1WriteFileBufferAllocator getInstance() {
       return WriteFileBufferAllocatorHolder.INSTANCE;
@@ -59,15 +61,17 @@ extends ReusableObjectAllocator<IWriteFileBuffer, WriteFileBuffer>
 
 
    private static final class WriteFileBufferAllocatorHolder {
-      private static final int BUFFER_SIZE_IN_MESSAGES =
-         V1WriteFileBufferAllocator.BUFFER_SIZE_IN_MESSAGES;
+		static final int BUFFER_SIZE_IN_MESSAGES = V1WriteFileBufferAllocator.BUFFER_SIZE_IN_MESSAGES;
 
-      private static final V1WriteFileBufferAllocator INSTANCE =
-         new V1WriteFileBufferAllocator(INITIAL_POOL_SIZE, POOL_SIZE_FIXED);
+		static final V1WriteFileBufferAllocator INSTANCE =
+			new V1WriteFileBufferAllocator(INITIAL_POOL_SIZE, POOL_SIZE_FIXED, new AtomicLong(0));
    }
 
 
-   private V1WriteFileBufferAllocator( final int initialPoolSize, final boolean poolSizeFixed )
+	// This would be private if private scope did not cause static inner classes to require a
+	// synthetic access method. Favoring performance and exposing package scope instead.
+	V1WriteFileBufferAllocator( final int initialPoolSize, final boolean poolSizeFixed,
+		final AtomicLong nextFileWriteOffset )
    {
       super(
          initialPoolSize,
@@ -75,9 +79,12 @@ extends ReusableObjectAllocator<IWriteFileBuffer, WriteFileBuffer>
             new WriteFileBuffer(
                onReturnCallback,
                pooledObjectIndex,
-               V1WriteFileBufferAllocator.getInstance(),
-               V1WriteFileBufferAllocator.getBufferSizeInMessages()),
+				// V1WriteFileBufferAllocator.getInstance(),
+				nextFileWriteOffset, V1WriteFileBufferAllocator.getBufferSizeInMessages()),
          poolSizeFixed);
+
+		assert(nextFileWriteOffset != null);
+		this.nextFileWriteOffset = nextFileWriteOffset;
    }
 
 
@@ -87,14 +94,14 @@ extends ReusableObjectAllocator<IWriteFileBuffer, WriteFileBuffer>
    }
 
 
-   void increaseNextFileWriteOffset(final int numBytes)
+	long increaseNextFileWriteOffset(final int numBytes)
    {
-      nextFileWriteOffset += numBytes;
+		return nextFileWriteOffset.addAndGet(numBytes);
    }
 
 
    long getNextFileWriteOffset()
    {
-      return nextFileWriteOffset;
+		return nextFileWriteOffset.get();
    }
 }

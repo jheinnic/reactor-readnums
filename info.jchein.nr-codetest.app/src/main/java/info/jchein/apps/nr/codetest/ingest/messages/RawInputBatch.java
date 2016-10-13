@@ -1,8 +1,6 @@
 package info.jchein.apps.nr.codetest.ingest.messages;
 
 
-import java.nio.ByteBuffer;
-
 import info.jchein.apps.nr.codetest.ingest.config.Constants;
 import info.jchein.apps.nr.codetest.ingest.reusable.AbstractReusableObject;
 import info.jchein.apps.nr.codetest.ingest.reusable.OnReturnCallback;
@@ -20,7 +18,7 @@ import info.jchein.apps.nr.codetest.ingest.reusable.OnReturnCallback;
  * @author John Heinnickel
  */
 public class RawInputBatch
-extends AbstractReusableObject<IRawInputBatch>
+extends AbstractReusableObject<IRawInputBatch, RawInputBatch>
 implements IRawInputBatch
 {
    final int[] batchBuffer;
@@ -30,7 +28,7 @@ implements IRawInputBatch
 
    private static final byte BYTE_0 = 48;
    private static final int[] DIVISORS = { 100000000, 10000000, 1000000, 100000, 10000, 1000, 100, 10 };
-
+	private static final int MESSAGE_SIZE_MINUS_ONE = Constants.VALID_MESSAGE_SIZE - 1;
 
    public RawInputBatch( final OnReturnCallback releaseCallback, final int poolIndex, final int flushAfterNInputs )
    {
@@ -70,42 +68,6 @@ implements IRawInputBatch
    }
 
 
-   @Override
-   public void loadCounterDeltas(final ICounterIncrements deltaContainer)
-   {
-      deltaContainer.setDeltas(entryCount, skipCount);
-   }
-
-
-   @Override
-   public RawInputBatch afterWrite()
-   {
-      batchBuffer[entryCount] = Integer.MIN_VALUE;
-      return (RawInputBatch) super.afterWrite();
-   }
-
-
-   @Override
-   public RawInputBatch beforeRead()
-   {
-      final RawInputBatch retVal = (RawInputBatch) super.beforeRead();
-
-      if (batchBuffer[entryCount] != Integer.MIN_VALUE)
-         throw new IllegalStateException(String.format(
-            "Broken safety check!! %d %d, %s",
-            entryCount,
-            batchBuffer[entryCount],
-            batchBuffer.toString()));
-      else {
-         batchBuffer[entryCount] = 0;
-      }
-
-      return retVal;
-   }
-
-
-   private static final int MESSAGE_SIZE_MINUS_ONE = Constants.VALID_MESSAGE_SIZE - 1;
-
    void getBytesFromInt( final int candidate )
    {
       assert candidate > 0;
@@ -117,7 +79,16 @@ implements IRawInputBatch
          bitSource = bitSource % DIVISORS[ii];
       }
       xferBytes[MESSAGE_SIZE_MINUS_ONE] = (byte) (BYTE_0 + bitSource);
+
    }
+
+
+	@Override
+	public RawInputBatch afterWrite()
+	{
+		batchBuffer[entryCount] = Integer.MIN_VALUE;
+		return super.afterWrite();
+	}
 
 
    /**
@@ -131,14 +102,16 @@ implements IRawInputBatch
    @Override
    public boolean transferToFileBuffer(final IWriteFileBuffer buf)
    {
+		super.beforeRead();
       final int capacity = buf.getMessageCapacityRemaining();
       if (entryCount > capacity)
          return false;
       else {
-         final ByteBuffer bbuf = buf.getBufferForFilling(entryCount, skipCount);
+			// final ByteBuffer bbuf = buf.getBufferForFilling(entryCount, skipCount);
+			// final ByteBuffer bbuf = buf.getByteBufferToFlush();
          for (int ii=0; ii<entryCount; ii++) {
             getBytesFromInt(batchBuffer[ii]);
-            bbuf.put(xferBytes);
+				buf.acceptUniqueInput(xferBytes);
          }
       }
 
@@ -154,6 +127,13 @@ implements IRawInputBatch
 
 
    @Override
+	public void loadCounterDeltas(final ICounterIncrements deltaContainer)
+	{
+		deltaContainer.setDeltas(entryCount, skipCount);
+	}
+
+
+	@Override
    public void recycle()
    {
       // Saving time by allowing the buffer to remain dirty, since the "entryCount" value serves as a

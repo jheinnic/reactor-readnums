@@ -42,7 +42,7 @@ public class ParametersConfiguration
    @Value("1")
    public int lifecycleEventBusThreads;
 
-   @Value("32")
+	@Value("64")
    public int lifecycleEventBusBufferSize;
 
    /*===========================+
@@ -64,17 +64,17 @@ public class ParametersConfiguration
    @Value("1500")
    public int socketTimeoutMilliseconds;
 
-   @Value("8192")
+	@Value("2048")
    public int inputMsgAllocBatchSize;
 
-   @Value("2000000")
+	@Value("4000000")
    public int peakMsgsPerSecondExpected;
 
    /*==========================+
     | Input Segment Parameters |
     +==========================*/
 
-   @Value("32768")
+	@Value("128")
    public int batchInputRingBufferSize;
 
    @Value("4")
@@ -83,30 +83,40 @@ public class ParametersConfiguration
    @Value("3200")
    public short flushAfterNInputs;
 
+	@Value("800")
+	public short flushOverflowTolerance;
+
    @Value("3000")
    public long flushEveryInterval;
 
    @Value("MILLISECONDS")
    public TimeUnit flushEveryTimeUnits;
 
-   @Value("512")
+	@Value("128")
    public int batchTimerWheelSize;
 
-   @Value("100")
+	@Value("750")
    public int batchTimerResolutionMillis;
 
    @Value("SLEEP")
    public TimerWaitKind batchTimerWaitKind;
 
-   @Value("2097152")
+	@Value("131072")
    public int peakExpectedInputsInFlight;
 
+
+   /*================================+
+    | Batch Input Segment Parameters |
+    +================================*/
+
+	@Value("512")
+	public int peakUnconsolidatedRawBatchesExpected;
 
    /*===============================+
     | Log Writer Segment Parameters |
     +===============================*/
 
-   @Value("256")
+	@Value("64")
    public int writeLogRingBufferSize;
 
    // @Value("#{systemProperties.myProp}:numbers.log")
@@ -124,10 +134,10 @@ public class ParametersConfiguration
     | Performance Tracking Segment Parameters |
     +=========================================*/
 
-   @Value("512")
+	@Value("128")
    public int reportTimerWheelSize;
 
-   @Value("100")
+	@Value("2000")
    public int reportTimerResolutionMillis;
 
    @Value("SLEEP")
@@ -136,6 +146,6 @@ public class ParametersConfiguration
    @Value("10")
    public int reportIntervalSeconds;
 
-   @Value("256")
+	@Value("64")
    public int perfCounterRingBufferSize;
 }

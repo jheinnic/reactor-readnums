@@ -17,7 +17,7 @@ package info.jchein.apps.nr.codetest.ingest.reusable;
  * @author John Heinnickel
  */
 @FunctionalInterface
-public interface IReusableObjectFactory<T extends AbstractReusableObject<? extends IReusable>>
+public interface IReusableObjectFactory<T extends AbstractReusableObject<?, T>>
 {
    /**
     * Accepts an on-release callback and pooled object ID from its parent{@link StrippedReusableObjectAllocator}

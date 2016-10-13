@@ -77,7 +77,7 @@ extends AbstractSegment
    @Override
    public int getPhase()
    {
-      return 100;
+		return 800;
    }
 
    /**
@@ -106,7 +106,7 @@ extends AbstractSegment
 
       writeOutputFileSegment.getReportCounterIncrementsStream()
       .process(counterIncrementsProcessor)
-      .mergeWith(Streams.period(reportTimer, 1)
+			.mergeWith(Streams.period(reportTimer, reportIntervalInSeconds)
          .map(evt -> counterIncrementsAllocator.allocate()
             .setDeltas(0, 0)))
       .observeCancel(evt -> {
@@ -122,15 +122,15 @@ extends AbstractSegment
             shutdownLock.unlock();
          }
       })
-      .observe(evt -> evt.beforeRead())
+			// .observe(evt -> evt.beforeRead())
       .window(reportIntervalInSeconds, TimeUnit.SECONDS, reportTimer)
       .flatMap(statStream -> {
          return statStream.reduce(
             counterIncrementsAllocator.allocate(),
             (final ICounterIncrements prevStat, final ICounterIncrements nextStat) -> {
-               nextStat.incrementDeltas(prevStat);
-               prevStat.release();
-               return nextStat;
+					prevStat.incrementDeltas(nextStat);
+					nextStat.release();
+					return prevStat;
          });
       })
       .consume( deltaSum -> {
@@ -140,22 +140,16 @@ extends AbstractSegment
          // duration for subsequent call to getTotalDuration() as well as total unique counter for
          // subsequent call to getTotalUniques().  Call to incrementUniqueValues() must therefore
          // precede either call to other two methods called out in this comment.
-         System.out.println(
-            String.format(
-               "\nDuring the last %d seconds, %d unique 9-digit inputs were logged and %d redundant inputs were discarded.\nSince service launch (%d seconds), %d unique 9-digit inputs have been logged.\n",
-               Long.valueOf(
-                  TimeUnit.NANOSECONDS.toSeconds(
-                     cumulativeValues.incrementUniqueValues(
-                        deltaSum.getDeltaUniques()))),
-               Integer.valueOf(
-                  deltaSum.getDeltaUniques()),
-               Integer.valueOf(
-                  deltaSum.getDeltaDuplicates()),
-               Long.valueOf(
-                  TimeUnit.NANOSECONDS.toSeconds(
-                     cumulativeValues.getTotalDuration())),
-               Integer.valueOf(
-                  cumulativeValues.getTotalUniques())));
+				System.out.println(
+					String.format(
+						"\nDuring the last %d seconds, %d unique 9-digit inputs were logged and %d redundant inputs were discarded.\nSince service launch (%d seconds), %d unique 9-digit inputs have been logged.\n",
+						Long.valueOf(
+							TimeUnit.NANOSECONDS
+								.toSeconds(cumulativeValues.incrementUniqueValues(deltaSum.getDeltaUniques()))),
+						Integer.valueOf(deltaSum.getDeltaUniques()),
+						Integer.valueOf(deltaSum.getDeltaDuplicates()),
+						Long.valueOf(TimeUnit.NANOSECONDS.toSeconds(cumulativeValues.getTotalDuration())),
+						Integer.valueOf(cumulativeValues.getTotalUniques())));
          deltaSum.release();
 
          final StringBuilder strBldr = new StringBuilder().append("\n");

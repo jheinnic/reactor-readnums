@@ -40,8 +40,8 @@ implements IStatsProviderSupplier
 
    private final File outputLogFile;
    private final byte concurrentFileWriters;
-   private final BatchInputSegment batchInputSegment;
-   private final Processor<IWriteFileBuffer,IWriteFileBuffer> writeOutputFileWorkProcessor;
+	private final FillWriteBuffersSegment fillWriteBuffersSegment;
+	private final Processor<IWriteFileBuffer, IWriteFileBuffer> writeOutputFileWorkProcessor;
    private final IReusableAllocator<ICounterIncrements> counterIncrementsAllocator;
 
    private FileOutputStream outputFileStream;
@@ -52,14 +52,14 @@ implements IStatsProviderSupplier
       final String outputFilePath,
       final byte concurrentFileWriters,
       final EventBus eventBus,
-      final BatchInputSegment batchInputSegment,
-      final Processor<IWriteFileBuffer,IWriteFileBuffer> writeOutputFileWorkProcessor,
+ final FillWriteBuffersSegment fillWriteBuffersSegment,
+		final Processor<IWriteFileBuffer, IWriteFileBuffer> writeOutputFileWorkProcessor,
       final IReusableAllocator<ICounterIncrements> counterIncrementsAllocator )
    {
       super(eventBus);
       this.concurrentFileWriters = concurrentFileWriters;
       outputLogFile = new File(outputFilePath);
-      this.batchInputSegment = batchInputSegment;
+		this.fillWriteBuffersSegment = fillWriteBuffersSegment;
       this.writeOutputFileWorkProcessor = writeOutputFileWorkProcessor;
       this.counterIncrementsAllocator = counterIncrementsAllocator;
    }
@@ -68,7 +68,7 @@ implements IStatsProviderSupplier
    @Override
    public int getPhase()
    {
-      return 200;
+		return 500;
    }
 
 
@@ -84,8 +84,8 @@ implements IStatsProviderSupplier
       Stream<ICounterIncrements>[] partitions =
          new Stream[concurrentFileWriters];
 
-      final Stream<IWriteFileBuffer> partitionedStreamRoot =
-         batchInputSegment.getBatchedRawDataStream()
+		final Stream<IWriteFileBuffer> partitionedStreamRoot =
+			fillWriteBuffersSegment.getFilledBufferStream()
          .process(writeOutputFileWorkProcessor);
 
       for (byte ii=0; ii<concurrentFileWriters; ii++) {
@@ -135,8 +135,7 @@ implements IStatsProviderSupplier
     */
    ICounterIncrements processBatch(final IWriteFileBuffer batchDef)
    {
-      batchDef.beforeRead();
-      final ByteBuffer buf = batchDef.getBufferToDrain();
+      final ByteBuffer buf = batchDef.getByteBufferToFlush();
       long writeOffset = batchDef.getFileWriteOffset();
 
       try {
@@ -170,11 +169,8 @@ implements IStatsProviderSupplier
             LOG.debug("Drained buffer to output file and recycled WriteFileBuffer message.", buf);
          }
 
-         final ICounterIncrements retVal =
-            batchDef.loadCounterDeltas(
-               counterIncrementsAllocator.allocate());
-         retVal.afterWrite();
-         return retVal;
+         return batchDef.loadCounterDeltas(
+            counterIncrementsAllocator.allocate());
       } catch (final IOException e) {
          if (LOG.isWarnEnabled()) {
             LOG.warn(String.format(
@@ -212,7 +208,7 @@ implements IStatsProviderSupplier
    public Iterable<IStatsProvider> get()
    {
       final ArrayList<IStatsProvider> retVal =
-         new ArrayList<IStatsProvider>(1);
+ new ArrayList<>(1);
       retVal.add(
          new ResourceStatsAdapter(
             "Output File Writers' RingBufferWorkProcessor",

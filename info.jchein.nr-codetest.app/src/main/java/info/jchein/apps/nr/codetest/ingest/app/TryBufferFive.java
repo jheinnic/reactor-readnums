@@ -9,6 +9,7 @@ import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.reactivestreams.Processor;
 import org.slf4j.Logger;
@@ -74,13 +75,13 @@ public class TryBufferFive
          new RawInputBatchAllocator(1024, false, 3000);
 
       final WriteFileBufferAllocator writeBufAlloc =
-         new WriteFileBufferAllocator(4096, false, 3072, new long[] { 0 });
+			new WriteFileBufferAllocator(4096, false, 3072, new AtomicLong(0));
 
       final IReusableAllocator<ICounterIncrements> counterAlloc =
          new CounterIncrementsAllocator(2048, false);
 
       final Codec<Buffer, IInputMessage, IInputMessage> msgCodec =
-         new DelimitedCodec<IInputMessage, IInputMessage>(
+			new DelimitedCodec<>(
             true,
             new InputMessageCodec(numDataPartitions, 16384, msgAlloc));
 
@@ -223,11 +224,11 @@ public class TryBufferFive
             )
 //               .log("writing")
             .map(writeBuf -> {
-//                     writeBuf.beforeRead();
+				// writeBuf.beforeRead();
                final ICounterIncrements countIncr =
                   processBatch(writeBuf, fileChannel, fileObject, counterAlloc);
 
-               countIncr.afterWrite();
+				// countIncr.afterWrite();
                return countIncr;
             })
 //               .log("preoutput")
@@ -370,7 +371,7 @@ public class TryBufferFive
       final FileChannel outputChannel, final File outputLogFile,
       final IReusableAllocator<ICounterIncrements> counterIncrementsAllocator)
    {
-      final ByteBuffer buf = batchDef.getBufferToDrain();
+      final ByteBuffer buf = batchDef.getByteBufferToFlush();
       long writeOffset = batchDef.getFileWriteOffset();
 
       try {

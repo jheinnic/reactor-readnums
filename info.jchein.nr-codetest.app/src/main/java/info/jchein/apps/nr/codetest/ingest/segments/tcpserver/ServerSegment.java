@@ -54,9 +54,9 @@ extends AbstractSegment
                .rcvbuf(socketReceiveBufferSize)
                .backlog(maxConcurrentSockets)
                .timeout(socketTimeoutMillis)
-               .prefetch(Long.MAX_VALUE)
+					.prefetch(10) // Long.MAX_VALUE)
                .keepAlive(false)
-               .tcpNoDelay(true)
+					.tcpNoDelay(false)
                .sndbuf(8192)
             )
             .listen(bindHost, bindPort);

@@ -1,7 +1,5 @@
 package info.jchein.apps.nr.codetest.ingest.reusable;
 
-import reactor.core.alloc.Recyclable;
-
 /**
  * Public interface for a classes whose instances are always pre-constructed by some subclass-defined
  * {@link ReusableAllocator} implementation to create a pool of leased objects.  Instances are acquired by
@@ -18,15 +16,7 @@ import reactor.core.alloc.Recyclable;
  * @author John Heinnickel
  */
 public abstract interface IReusable
-extends Recyclable
 {
-   /**
-    * Get the age of this {@code Reference} since it's creation in nanoseconds.
-    *
-    * @return the number of nanoseconds since this {@code IResuable} was leased.
-    */
-   long getAge();
-
    int getReferenceCount();
 
    void retain();
@@ -37,7 +27,7 @@ extends Recyclable
 
    void release(int decr);
 
-   IReusable afterWrite();
+	// IReusable afterWrite();
 
-   IReusable beforeRead();
+	// IReusable beforeRead();
 }

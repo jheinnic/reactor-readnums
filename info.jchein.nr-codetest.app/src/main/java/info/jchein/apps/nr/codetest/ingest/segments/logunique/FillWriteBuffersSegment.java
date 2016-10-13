@@ -36,7 +36,7 @@ extends AbstractSegment
    @Override
    public int getPhase()
    {
-      return 100;
+		return 400;
    }
 
 
@@ -46,15 +46,15 @@ extends AbstractSegment
       LOG.info("Activating pipeline segment for consolidating input batches as larger buffers for writing output file");
 
       // Assuming that all calls to an instance of this action originate on a common thread...
-      final IWriteFileBuffer[] activeBufferRef = new IWriteFileBuffer[] {
-         writeBufferAllocator.allocate() };
+		IWriteFileBuffer[] activeBufferRef = {
+			writeBufferAllocator.allocate()
+		};
 
       filledBufferStream =
          batchedInputSegment.getBatchedRawDataStream()
          .map( evt -> {
-            final IWriteFileBuffer activeBuffer = activeBufferRef[0];
             final IWriteFileBuffer retVal;
-            if (evt.transferToFileBuffer(activeBuffer)) {
+				if (evt.transferToFileBuffer(activeBufferRef[0])) {
                retVal = null;
             } else {
                // Writing would have overflowed the current buffer.  Its time to emit this event and
@@ -63,13 +63,13 @@ extends AbstractSegment
 
                // activeBuffer.setFileWriteOffset(nextFileWriteOffset);
                // nextFileWriteOffset += activeBuffer.getByteCapacity() - capacityAfter;
-               retVal = activeBuffer;
-               final IWriteFileBuffer nextActiveBuffer = writeBufferAllocator.allocate();
-               if (evt.transferToFileBuffer(nextActiveBuffer)) {
-                  activeBufferRef[0] = nextActiveBuffer;
-               } else
-                  // TODO: Subclass a specific Exception class!
-                  throw new RuntimeException("Could not populate newly allocated file buffer with initial batch!");
+					activeBufferRef[0].afterWrite();
+					retVal = activeBufferRef[0];
+					activeBufferRef[0] = writeBufferAllocator.allocate();
+					boolean newWrite = evt.transferToFileBuffer(activeBufferRef[0]);
+					assert newWrite;
+					// TODO: Subclass a specific Exception class!
+					// throw new RuntimeException("Could not populate newly allocated file buffer with initial batch!");
             }
 
             evt.release();
