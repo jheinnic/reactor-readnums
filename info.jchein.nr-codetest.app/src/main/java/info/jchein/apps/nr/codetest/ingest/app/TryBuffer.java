@@ -160,7 +160,9 @@ public class TryBuffer
                         msg.release();
                      } else {
                         msg.release();
-                        batch.trackSkippedDuplicate();
+								// Duplicate tracking really requires an intermediate stage to
+								// accumulate counters.
+								batch.trackSkippedDuplicates(1);
                      }
 
                      return batch;

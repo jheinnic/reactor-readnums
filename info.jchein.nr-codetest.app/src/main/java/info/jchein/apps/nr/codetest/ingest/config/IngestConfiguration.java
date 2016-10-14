@@ -270,7 +270,7 @@ public class IngestConfiguration
          new Processor[parametersConfiguration.dataPartitionCount];
       for (int ii = 0; ii < parametersConfiguration.dataPartitionCount; ii++) {
          fanOutProcessors[ii] =
-            RingBufferProcessor.share(
+            RingBufferProcessor.create(
                "fanOutProcessor-" + ii, parametersConfiguration.batchInputRingBufferSize, true);
       }
 
@@ -345,9 +345,16 @@ public class IngestConfiguration
    @Scope("singleton")
    RingBufferProcessor<ICounterIncrements> perfCounterProcessor()
    {
-      return RingBufferProcessor.<ICounterIncrements> create(
-         "perfCounterRingBuffer",
-         RingBufferUtils.nextSmallestPowerOf2(parametersConfiguration.perfCounterRingBufferSize));
+		final byte numConcurrentWriters = parametersConfiguration.numConcurrentWriters;
+		if (numConcurrentWriters == 1) {
+			return RingBufferProcessor.<ICounterIncrements> create(
+				"perfCounterRingBuffer",
+				RingBufferUtils.nextSmallestPowerOf2(parametersConfiguration.perfCounterRingBufferSize));
+		} else {
+			return RingBufferProcessor.<ICounterIncrements> share(
+				"perfCounterRingBuffer",
+				RingBufferUtils.nextSmallestPowerOf2(parametersConfiguration.perfCounterRingBufferSize));
+		}
    }
 
    @Bean

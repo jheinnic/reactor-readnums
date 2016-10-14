@@ -51,9 +51,9 @@ implements IWriteFileBuffer
 
 
 	@Override
-	public void trackSkippedDuplicate()
+	public void trackSkippedDuplicates(final int skipCount)
 	{
-		skipCount++;
+		this.skipCount += skipCount;
 	}
 
 

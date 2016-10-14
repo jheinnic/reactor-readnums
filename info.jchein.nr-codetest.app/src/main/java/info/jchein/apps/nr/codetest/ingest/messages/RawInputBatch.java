@@ -113,6 +113,7 @@ implements IRawInputBatch
             getBytesFromInt(batchBuffer[ii]);
 				buf.acceptUniqueInput(xferBytes);
          }
+			buf.trackSkippedDuplicates(skipCount);
       }
 
       return true;

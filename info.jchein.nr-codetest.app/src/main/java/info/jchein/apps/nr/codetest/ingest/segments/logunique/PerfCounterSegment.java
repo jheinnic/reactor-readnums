@@ -47,10 +47,11 @@ extends AbstractSegment
    private final WriteOutputFileSegment writeOutputFileSegment;
    private final Processor<ICounterIncrements,ICounterIncrements> counterIncrementsProcessor;
 
-   private final CounterOverall cumulativeValues = new CounterOverall();
+	private final CounterOverall cumulativeValues = new CounterOverall();
    private final ArrayList<IStatsProvider> bufferStatProviders = new ArrayList<>();
 
-   private final IReusableAllocator<ICounterIncrements> counterIncrementsAllocator;
+
+	private final IReusableAllocator<ICounterIncrements> counterIncrementsAllocator;
 
    public PerfCounterSegment(
       final long updateResolutionInSeconds,
@@ -65,7 +66,7 @@ extends AbstractSegment
       reportTimer = reportingTimer;
       this.writeOutputFileSegment = writeOutputFileSegment;
       this.counterIncrementsProcessor = counterIncrementsProcessor;
-      this.counterIncrementsAllocator = counterIncrementsAllocator;
+		this.counterIncrementsAllocator = counterIncrementsAllocator;
 
       bufferStatProviders.add(
          new ResourceStatsAdapter(
@@ -105,41 +106,46 @@ extends AbstractSegment
       final Condition completed = shutdownLock.newCondition();
 
       writeOutputFileSegment.getReportCounterIncrementsStream()
-      .process(counterIncrementsProcessor)
+			.<ICounterIncrements> flatMap(nestedStream -> {
+				return nestedStream;
+			})
+			.process(counterIncrementsProcessor)
 			.mergeWith(Streams.period(reportTimer, reportIntervalInSeconds)
-         .map(evt -> counterIncrementsAllocator.allocate()
-            .setDeltas(0, 0)))
-      .observeCancel(evt -> {
-         // Toggle the first seenOnComplete flag once input to the final window is recognized by
-         // observing a SHUTDOWN event being fed to the window boundary.  Note that we are taking
-         // advantage observeCancel()'s bug that causes it to trigger on SHUTDOWN signals rather
-         // than CANCEL signals since there is no native observeShutdown() observer!
-         shutdownLock.lock();
-         try {
-            seenOnComplete[0] = true;
-            LOG.info("Performance stats segment receives an end of stream signal.  No additional data will follow.");
-         } finally {
-            shutdownLock.unlock();
-         }
-      })
+				.map(evt -> counterIncrementsAllocator.allocate()
+					.setDeltas(0, 0)))
+			.observeCancel(evt -> {
+				// Toggle the first seenOnComplete flag once input to the final window is recognized by
+				// observing a SHUTDOWN event being fed to the window boundary. Note that we are taking
+				// advantage observeCancel()'s bug that causes it to trigger on SHUTDOWN signals rather
+				// than CANCEL signals since there is no native observeShutdown() observer!
+				shutdownLock.lock();
+				try {
+					seenOnComplete[0] = true;
+					LOG.info(
+						"Performance stats segment receives an end of stream signal.  No additional data will follow.");
+				}
+				finally {
+					shutdownLock.unlock();
+				}
+			})
 			// .observe(evt -> evt.beforeRead())
-      .window(reportIntervalInSeconds, TimeUnit.SECONDS, reportTimer)
-      .flatMap(statStream -> {
-         return statStream.reduce(
-            counterIncrementsAllocator.allocate(),
-            (final ICounterIncrements prevStat, final ICounterIncrements nextStat) -> {
+			.window(reportIntervalInSeconds, TimeUnit.SECONDS, reportTimer)
+			.flatMap(statStream -> {
+				return statStream.reduce(
+					counterIncrementsAllocator.allocate(),
+					(final ICounterIncrements prevStat, final ICounterIncrements nextStat) -> {
 					prevStat.incrementDeltas(nextStat);
 					nextStat.release();
 					return prevStat;
          });
-      })
-      .consume( deltaSum -> {
-         // First argument to format aggregates the total unique counter and returns the duration
-         // since the last update.  Remaining arguments are simple getters.  If this is later
-         // rearranged, understand that initial call to incrementUniqueValues() establishes time
-         // duration for subsequent call to getTotalDuration() as well as total unique counter for
-         // subsequent call to getTotalUniques().  Call to incrementUniqueValues() must therefore
-         // precede either call to other two methods called out in this comment.
+			})
+			.consume(deltaSum -> {
+				// First argument to format aggregates the total unique counter and returns the duration
+				// since the last update. Remaining arguments are simple getters. If this is later
+				// rearranged, understand that initial call to incrementUniqueValues() establishes time
+				// duration for subsequent call to getTotalDuration() as well as total unique counter for
+				// subsequent call to getTotalUniques(). Call to incrementUniqueValues() must therefore
+				// precede either call to other two methods called out in this comment.
 				System.out.println(
 					String.format(
 						"\nDuring the last %d seconds, %d unique 9-digit inputs were logged and %d redundant inputs were discarded.\nSince service launch (%d seconds), %d unique 9-digit inputs have been logged.\n",
@@ -150,21 +156,21 @@ extends AbstractSegment
 						Integer.valueOf(deltaSum.getDeltaDuplicates()),
 						Long.valueOf(TimeUnit.NANOSECONDS.toSeconds(cumulativeValues.getTotalDuration())),
 						Integer.valueOf(cumulativeValues.getTotalUniques())));
-         deltaSum.release();
+				deltaSum.release();
 
-         final StringBuilder strBldr = new StringBuilder().append("\n");
-         for ( final IStatsProvider statsProvider : bufferStatProviders ) {
-            strBldr.append("Buffer usage for ")
-            .append(statsProvider.getName())
-            .append(" reported as ")
-            .append(statsProvider.getFreeBufferSlots())
-            .append(" slots available out of a total of ")
-            .append(statsProvider.getTotalBufferCapacity())
-            .append(" allocated.\n");
-         }
+				final StringBuilder strBldr = new StringBuilder().append("\n");
+				for (final IStatsProvider statsProvider : bufferStatProviders) {
+					strBldr.append("Buffer usage for ")
+						.append(statsProvider.getName())
+						.append(" reported as ")
+						.append(statsProvider.getFreeBufferSlots())
+						.append(" slots available out of a total of ")
+						.append(statsProvider.getTotalBufferCapacity())
+						.append(" allocated.\n");
+				}
 
-         System.out.println(strBldr.toString());
-      });
+				System.out.println(strBldr.toString());
+			});
 //      .consume(evt -> {
 //         final int deltaUniques = evt.getDeltaUniques();
 //         final int deltaDuplicates = evt.getDeltaDuplicates();
@@ -216,30 +222,33 @@ extends AbstractSegment
 //               return nextDelta;
 //            })
 //         });
-      LOG.info("Data collection is online");
+		LOG.info("Data collection is online");
 
-      return evt -> {
-         long nanosTimeout = evt.getData().longValue();
+		return evt -> {
+			long nanosTimeout = evt.getData()
+				.longValue();
 
-         // terminalControl.cancel();
-         shutdownLock.lock();
-         try {
-            while(seenOnComplete[0] == false) {
-               try {
-                  nanosTimeout = completed.awaitNanos(nanosTimeout);
-               } catch (final InterruptedException e) {
-                  LOG.error("Clean shutdown aborted by thread interruption!");
-                  Thread.interrupted();
-                  return Boolean.FALSE;
+			// terminalControl.cancel();
+			shutdownLock.lock();
+			try {
+				while (seenOnComplete[0] == false) {
+					try {
+						nanosTimeout = completed.awaitNanos(nanosTimeout);
+					}
+					catch (final InterruptedException e) {
+						LOG.error("Clean shutdown aborted by thread interruption!");
+						Thread.interrupted();
+						return Boolean.FALSE;
                }
             }
 
-            LOG.info("Performance stats segment acknowledges it is prepared for a clean shutdown");
-            return Boolean.TRUE;
-         } finally {
-            shutdownLock.unlock();
-         }
-      };
+				LOG.info("Performance stats segment acknowledges it is prepared for a clean shutdown");
+				return Boolean.TRUE;
+			}
+			finally {
+				shutdownLock.unlock();
+			}
+		};
    }
 
    @Autowired

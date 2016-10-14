@@ -11,7 +11,7 @@ public interface IWriteFileBuffer extends IReusable
    public void acceptUniqueInput(byte[] message);
 
 
-   public void trackSkippedDuplicate();
+	public void trackSkippedDuplicates(int duplicateCount);
 
 
    public int getMessageCapacity();

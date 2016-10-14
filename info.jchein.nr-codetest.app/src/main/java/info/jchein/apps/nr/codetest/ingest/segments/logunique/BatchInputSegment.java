@@ -81,12 +81,13 @@ implements IStatsProviderSupplier
 					.byteValue();
 
 				return partitionStream.process(fanOutProcessors[partitionIndex])
-					.observe(evt -> evt.beforeRead())
+					// .observe(evt -> evt.beforeRead())
 					.window(ioCount, ioPeriod, ioTimeUnit, ingestionTimer)
 					.<IRawInputBatch> flatMap(nestedWindow -> {
 						return nestedWindow/* .log("Input") */.reduce(
 							rawInputBatchAllocator.allocate(),
 							(final IRawInputBatch batch, final IInputMessage msg) -> {
+								msg.beforeRead();
 								if (uniqueTest.isUnique(msg.getPrefix(), msg.getSuffix())) {
 									batch.acceptUniqueInput(msg.getMessage());
 									msg.release();
