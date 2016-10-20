@@ -2,7 +2,6 @@ package info.jchein.apps.nr.codetest.ingest.config;
 
 import java.util.concurrent.Executors;
 
-import org.reactivestreams.Processor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowire;
@@ -24,7 +23,6 @@ import info.jchein.apps.nr.codetest.ingest.messages.IInputMessage;
 import info.jchein.apps.nr.codetest.ingest.messages.IWriteFileBuffer;
 import info.jchein.apps.nr.codetest.ingest.perfdata.RingBufferUtils;
 import info.jchein.apps.nr.codetest.ingest.segments.logunique.BatchInputSegment;
-import info.jchein.apps.nr.codetest.ingest.segments.logunique.FillWriteBuffersSegment;
 import info.jchein.apps.nr.codetest.ingest.segments.logunique.PerfCounterSegment;
 import info.jchein.apps.nr.codetest.ingest.segments.logunique.UniqueMessageTrie;
 import info.jchein.apps.nr.codetest.ingest.segments.logunique.WriteOutputFileSegment;
@@ -34,7 +32,7 @@ import info.jchein.apps.nr.codetest.ingest.segments.tcpserver.ServerSegment;
 import reactor.Environment;
 import reactor.bus.EventBus;
 import reactor.core.Dispatcher;
-import reactor.core.dispatch.RingBufferDispatcher;
+import reactor.core.config.DispatcherType;
 import reactor.core.dispatch.SynchronousDispatcher;
 import reactor.core.dispatch.wait.AgileWaitingStrategy;
 import reactor.core.processor.RingBufferProcessor;
@@ -46,9 +44,9 @@ import reactor.fn.timer.Timer;
 import reactor.io.buffer.Buffer;
 import reactor.io.codec.Codec;
 import reactor.io.codec.DelimitedCodec;
-import reactor.jarjar.com.lmax.disruptor.dsl.ProducerType;
 import reactor.rx.Stream;
 import reactor.rx.broadcast.Broadcaster;
+import reactor.rx.stream.GroupedStream;
 
 @Configuration
 @Import( {ParametersConfiguration.class, EventConfiguration.class} )
@@ -60,10 +58,10 @@ public class IngestConfiguration
    IngestConfiguration() { }
 
    @Autowired
-   ParametersConfiguration parametersConfiguration;
+   ParametersConfiguration paramsConfig;
 
    @Autowired
-   EventConfiguration eventsConfiguration;
+   EventConfiguration eventsConfig;
 
    /*=====================+
     | Reactor Environment |
@@ -72,7 +70,9 @@ public class IngestConfiguration
    @Bean
    @Scope("singleton")
    public Environment reactorEnvironment() {
-      return Environment.initialize().assignErrorJournal();
+		return Environment
+			.initialize(throwable -> LOG.error("Reactor environment caught an unhandled error", throwable))
+			.assignErrorJournal();
    }
 
    /*=====================+
@@ -94,14 +94,16 @@ public class IngestConfiguration
    @Scope("singleton")
    public Dispatcher lifecycleEventBusDispatcher()
    {
-      final Dispatcher eventBusDispatcher =
+      final String dispatcherName =
+      	paramsConfig.lifecycleEventBusName + "Dispatcher";
+		final Dispatcher eventBusDispatcher =
          Environment.newDispatcher(
-            parametersConfiguration.lifecycleEventBusName + "Dispatcher",
-            RingBufferUtils.nextSmallestPowerOf2(
-               parametersConfiguration.lifecycleEventBusBufferSize),
-            parametersConfiguration.lifecycleEventBusThreads);
-      reactorEnvironment().setDispatcher(
-         parametersConfiguration.lifecycleEventBusName + "Dispatcher", eventBusDispatcher);
+            dispatcherName,
+				RingBufferUtils.nextSmallestPowerOf2(paramsConfig.lifecycleEventBusBufferSize),
+				paramsConfig.lifecycleEventBusThreads, DispatcherType.RING_BUFFER);
+
+      reactorEnvironment()
+      	.setDispatcher(dispatcherName, eventBusDispatcher);
 
       return eventBusDispatcher;
    }
@@ -112,21 +114,20 @@ public class IngestConfiguration
    public EventBus lifecycleEventBus()
    {
       return EventBus.config()
-      .env(reactorEnvironment())
-      .dispatcher(lifecycleEventBusDispatcher())
-      .dispatchErrorHandler(t -> {
-         t.fillInStackTrace();
-         LOG.error("First match EventBus trapped a dispatcher error:", t);
-      })
-      .uncaughtErrorHandler(t -> {
-         t.fillInStackTrace();
-         LOG.error("Uncaught error trapped by first match EventBus:", t);
-      })
-      .consumerNotFoundHandler(
-         key -> LOG.error("No consumer found for routing Event with key {}", key)
-      )
-      .firstEventRouting()
-      .get();
+			.env(reactorEnvironment())
+			.dispatcher(lifecycleEventBusDispatcher())
+			.dispatchErrorHandler(t -> {
+				t.fillInStackTrace();
+				LOG.error("First match EventBus trapped a dispatcher error:", t);
+			})
+			.uncaughtErrorHandler(t -> {
+				t.fillInStackTrace();
+				LOG.error("Uncaught error trapped by first match EventBus:", t);
+			})
+			.consumerNotFoundHandler(
+				key -> LOG.error("No consumer found for routing Event with key {}", key))
+			.firstEventRouting()
+			.get();
    }
 
    @Bean
@@ -134,7 +135,7 @@ public class IngestConfiguration
    @Autowired
    ApplicationWatchdog applicationWatchdog( final ConfigurableApplicationContext applicationContext ) {
       return new ApplicationWatchdog(
-         applicationConsole(), codec(), mergedSocketsBroadcaster(), applicationContext
+			applicationConsole(), codec(), streamsToMerge(), applicationContext
       );
    }
 
@@ -151,31 +152,36 @@ public class IngestConfiguration
     | Access to Input Bridge |
     +========================*/
 
+	@Bean
+	@Scope("singleton")
+	AgileWaitingStrategy agileDispatchWaitStrategy()
+	{
+		return new AgileWaitingStrategy();
+	}
+
    @Bean
    @Scope("singleton")
-   Dispatcher mergedSocketsDispatcher()
+   Dispatcher socketHandoffDispatcher()
    {
-      final Dispatcher mergedSocketsDispatcher =
-         new RingBufferDispatcher(
-            "mergedSocketsDispatcher",
-            RingBufferUtils.nextSmallestPowerOf2(parametersConfiguration.batchInputRingBufferSize),
-            err -> LOG.error("Error", err),
-            ProducerType.MULTI,
-            new AgileWaitingStrategy());
-            //new BusySpinWaitStrategy());
+		return Environment.newDispatcher(
+			"socketHandoffDispatcher",
+			RingBufferUtils.nextSmallestPowerOf2(paramsConfig.fanOutRingBufferSize), 5,
+			DispatcherType.RING_BUFFER);
 
+		// err -> LOG.error("Error", err),
+		// ProducerType.MULTI,
+		// agileDispatchWaitStrategy());
       // Environment.newDispatcher( "mergedSocketsDispatcher", 1);
-      reactorEnvironment().setDispatcher("mergedSocketsDispatcher", mergedSocketsDispatcher);
-      return mergedSocketsDispatcher;
    }
 
 
-   @Bean
-   @Scope("singleton")
-   Broadcaster<IInputMessage> mergedSocketsBroadcaster() {
-      return Broadcaster.<IInputMessage>create(
-         reactorEnvironment(), mergedSocketsDispatcher());
-   }
+	// @Bean
+	// @Scope("singleton")
+	// Broadcaster<Stream<GroupedStream<Integer, IInputMessage>>> mergedSocketsBroadcaster()
+	// {
+	// return Broadcaster.<Stream<GroupedStream<Integer, IInputMessage>>> create(
+	// reactorEnvironment(), socketHandoffDispatcher());
+	// }
 
 
    /*================+
@@ -193,9 +199,9 @@ public class IngestConfiguration
    @Scope("singleton")
    InputMessageCodec codecDelegate() {
       return new InputMessageCodec(
-         parametersConfiguration.dataPartitionCount,
-         parametersConfiguration.inputMsgAllocBatchSize,
-         eventsConfiguration.inputMessageAllocator());
+         paramsConfig.dataPartitionCount,
+         paramsConfig.inputMsgAllocBatchSize,
+         eventsConfig.inputMessageAllocator());
    }
 
 
@@ -205,21 +211,28 @@ public class IngestConfiguration
    ConnectionHandler connectionHandler( final Consumer<Void> terminationConsumer )
    {
       return new ConnectionHandler(
-         parametersConfiguration.maxConcurrentSockets,
-         streamsToMerge(),
-         terminationConsumer );
+			paramsConfig.maxConcurrentSockets, terminationConsumer, streamsToMerge());
    }
+
+
+	@Bean
+	@Scope("singleton")
+	Broadcaster<Stream<GroupedStream<Integer, IInputMessage>>> streamsToMerge()
+	{
+		return Broadcaster.create(reactorEnvironment(), SynchronousDispatcher.INSTANCE);
+	}
+
 
    @Bean
    @Scope("singleton")
    @Autowired
    ServerSegment serverSegment( final ConnectionHandler connectionHandler ) {
       return new ServerSegment(
-         parametersConfiguration.bindHost,
-         parametersConfiguration.bindPort,
-         parametersConfiguration.maxConcurrentSockets,
-         parametersConfiguration.socketReceiveBufferBytes,
-         parametersConfiguration.socketTimeoutMilliseconds,
+         paramsConfig.bindHost,
+         paramsConfig.bindPort,
+         paramsConfig.maxConcurrentSockets,
+         paramsConfig.socketReceiveBufferBytes,
+         paramsConfig.socketTimeoutMilliseconds,
          lifecycleEventBus(),
          reactorEnvironment(),
          connectionHandler,
@@ -236,21 +249,16 @@ public class IngestConfiguration
    @Scope("singleton")
    Timer ingestionTimer()
    {
+      // final Timer retVal = new HashWheelTimer(
       return new HashWheelTimer(
          "inputBatchingTimer",
-         parametersConfiguration.batchTimerResolutionMillis,
-         RingBufferUtils.nextSmallestPowerOf2(parametersConfiguration.batchTimerWheelSize),
-         parametersConfiguration.batchTimerWaitKind.get(),
-         Executors.newFixedThreadPool(1, new NamedDaemonThreadFactory(
-            "inputBatchingTimer-run")));
-   }
-
-
-   @Bean
-   @Scope("singleton")
-   Broadcaster<Stream<IInputMessage>> streamsToMerge()
-   {
-      return Broadcaster.create(reactorEnvironment(), SynchronousDispatcher.INSTANCE);
+         paramsConfig.batchTimerResolutionMillis,
+         RingBufferUtils.nextSmallestPowerOf2(paramsConfig.batchTimerWheelSize),
+         paramsConfig.batchTimerWaitKind.get(),
+         Executors.newFixedThreadPool(
+         	1, new NamedDaemonThreadFactory("inputBatchingTimer")));
+		// Environment.get()...;
+		// return retVal;
    }
 
 
@@ -264,17 +272,23 @@ public class IngestConfiguration
 
    @Bean
    @Scope("singleton")
-   Processor<IInputMessage,IInputMessage>[] fanOutProcessors() {
-      @SuppressWarnings("unchecked")
-      final Processor<IInputMessage, IInputMessage>[] fanOutProcessors =
-         new Processor[parametersConfiguration.dataPartitionCount];
-      for (int ii = 0; ii < parametersConfiguration.dataPartitionCount; ii++) {
-         fanOutProcessors[ii] =
-            RingBufferProcessor.create(
-               "fanOutProcessor-" + ii, parametersConfiguration.batchInputRingBufferSize, true);
+	// Processor<GroupedStream<Integer, IInputMessage>, GroupedStream<Integer, IInputMessage>>[]
+   Dispatcher[] fanOutDispatchers()
+	{
+		// final Processor<GroupedStream<Integer, IInputMessage>, GroupedStream<Integer, IInputMessage>>[] fanOutProcessors =
+      //    new Processor[paramsConfig.dataPartitionCount];
+      final Dispatcher[] fanOutDispatchers = new Dispatcher[paramsConfig.dataPartitionCount];
+      for (int ii = 0; ii < paramsConfig.dataPartitionCount; ii++) {
+         fanOutDispatchers[ii] =
+				Environment.newDispatcher(
+					"fanOutDispatcher-" + ii,
+					RingBufferUtils.nextSmallestPowerOf2(paramsConfig.fanOutRingBufferSize), 1,
+					DispatcherType.RING_BUFFER);
+			// new RingBufferDispatcher(
+			// err -> LOG.error("Error", err), ProducerType.MULTI, agileDispatchWaitStrategy());
       }
 
-      return fanOutProcessors;
+		return fanOutDispatchers;
    }
 
 
@@ -282,26 +296,27 @@ public class IngestConfiguration
    @Scope("singleton")
    BatchInputSegment batchInputSegment() {
       return new BatchInputSegment(
-         parametersConfiguration.flushAfterNInputs,
-         parametersConfiguration.flushEveryInterval,
-         parametersConfiguration.flushEveryTimeUnits,
-         parametersConfiguration.dataPartitionCount,
+         paramsConfig.flushAfterNInputs,
+         paramsConfig.flushEveryInterval,
+         paramsConfig.flushEveryTimeUnits,
+         paramsConfig.dataPartitionCount,
          lifecycleEventBus(),
          ingestionTimer(),
          uniqueMessageTrie(),
          streamsToMerge(),
-			eventsConfiguration.rawInputBatchAllocator(),
-         fanOutProcessors());
+			eventsConfig.writeFileBufferAllocator(),
+         socketHandoffDispatcher(),
+         fanOutDispatchers());
    }
    
-   @Bean
-   @Scope("singleton")
-   FillWriteBuffersSegment fillWriteBuffersSegment() {
-   	return new FillWriteBuffersSegment(
-   		lifecycleEventBus(),
-   		batchInputSegment(), 
-   		eventsConfiguration.writeFileBufferAllocator());
-   }
+	// @Bean
+	// @Scope("singleton")
+	// FillWriteBuffersSegment fillWriteBuffersSegment() {
+	// return new FillWriteBuffersSegment(
+	// lifecycleEventBus(),
+	// batchInputSegment(),
+	// eventsConfig.writeFileBufferAllocator());
+	// }
 
 
    //=================//
@@ -314,7 +329,20 @@ public class IngestConfiguration
    {
       return RingBufferWorkProcessor.<IWriteFileBuffer> share(
          "writeOutputFileWorkProcessor",
-         RingBufferUtils.nextSmallestPowerOf2(parametersConfiguration.writeLogRingBufferSize));
+			RingBufferUtils.nextSmallestPowerOf2(paramsConfig.writeOutputRingBufferSize));
+	}
+
+
+	@Bean
+	@Scope("singleton")
+	Dispatcher writeOutputFileDispatcher()
+	{
+		final int bufferSize = paramsConfig.writeOutputRingBufferSize;
+
+		return Environment.newDispatcher(
+			"writeOutputFileDispatcher",
+			RingBufferUtils.nextSmallestPowerOf2(bufferSize),
+			1, DispatcherType.RING_BUFFER);
    }
 
 
@@ -322,18 +350,22 @@ public class IngestConfiguration
    @Scope("singleton")
    WriteOutputFileSegment writeOutputFileSegment()
    {
-      final byte numConcurrentWriters = parametersConfiguration.numConcurrentWriters;
-      Preconditions.checkArgument(
-         RingBufferUtils.nextSmallestPowerOf2(numConcurrentWriters) == numConcurrentWriters,
-         "Conccurent writers configuration parameter must be set to a power of 2");
+		final short numConcurrentWriters = paramsConfig.numConcurrentWriters;
+		Preconditions.checkArgument(
+			numConcurrentWriters == 1,
+			"No more than one output writer thread and at least one output writer thread is supported at this time.");
+		// Preconditions.checkArgument(
+		// RingBufferUtils.nextSmallestPowerOf2(numConcurrentWriters) == numConcurrentWriters,
+		// "Concurrent writers configuration parameter must be set to a power of 2");
 
       return new WriteOutputFileSegment(
-         parametersConfiguration.outputLogFilePath,
+         paramsConfig.outputLogFilePath,
          numConcurrentWriters,
          lifecycleEventBus(),
-			fillWriteBuffersSegment(),
+         batchInputSegment(),
+			writeOutputFileDispatcher(),
          writeOutputFileWorkProcessor(),
-         eventsConfiguration.incrementCountersAllocator());
+         eventsConfig.incrementCountersAllocator());
    }
 
 
@@ -345,27 +377,42 @@ public class IngestConfiguration
    @Scope("singleton")
    RingBufferProcessor<ICounterIncrements> perfCounterProcessor()
    {
-		final byte numConcurrentWriters = parametersConfiguration.numConcurrentWriters;
+		final byte numConcurrentWriters = paramsConfig.numConcurrentWriters;
 		if (numConcurrentWriters == 1) {
 			return RingBufferProcessor.<ICounterIncrements> create(
 				"perfCounterRingBuffer",
-				RingBufferUtils.nextSmallestPowerOf2(parametersConfiguration.perfCounterRingBufferSize));
+				RingBufferUtils.nextSmallestPowerOf2(paramsConfig.perfCounterRingBufferSize));
 		} else {
 			return RingBufferProcessor.<ICounterIncrements> share(
 				"perfCounterRingBuffer",
-				RingBufferUtils.nextSmallestPowerOf2(parametersConfiguration.perfCounterRingBufferSize));
+				RingBufferUtils.nextSmallestPowerOf2(paramsConfig.perfCounterRingBufferSize));
 		}
    }
 
    @Bean
    @Scope("singleton")
+	Dispatcher perfCounterDispatcher()
+	{
+		final short numConcurrentWriters = paramsConfig.numConcurrentWriters;
+		Preconditions.checkArgument(
+			numConcurrentWriters == 1,
+			"No more than one output writer thread and at least one output writer thread is supported at this time.");
+
+		return Environment.newDispatcher(
+			"stats-gatherer", RingBufferUtils.nextSmallestPowerOf2(paramsConfig.perfCounterRingBufferSize),
+			1, DispatcherType.RING_BUFFER);
+	}
+
+
+	@Bean
+	@Scope("singleton")
    Timer reportingTimer()
    {
       return new HashWheelTimer(
          "reportingTimer",
-         parametersConfiguration.reportTimerResolutionMillis,
-         RingBufferUtils.nextSmallestPowerOf2(parametersConfiguration.reportTimerWheelSize),
-         parametersConfiguration.reportTimerWaitKind.get(),
+         paramsConfig.reportTimerResolutionMillis,
+         RingBufferUtils.nextSmallestPowerOf2(paramsConfig.reportTimerWheelSize),
+         paramsConfig.reportTimerWaitKind.get(),
          Executors.newFixedThreadPool(1, new NamedDaemonThreadFactory(
             "reporting-timer-run")));
    }
@@ -376,11 +423,11 @@ public class IngestConfiguration
    PerfCounterSegment perfCounterSegment()
    {
       return new PerfCounterSegment(
-         parametersConfiguration.reportIntervalSeconds,
+         paramsConfig.reportIntervalSeconds,
          lifecycleEventBus(),
          reportingTimer(),
          writeOutputFileSegment(),
          perfCounterProcessor(),
-         eventsConfiguration.incrementCountersAllocator());
+         eventsConfig.incrementCountersAllocator());
    }
 }

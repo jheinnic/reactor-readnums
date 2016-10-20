@@ -157,9 +157,6 @@ implements IReusableAllocator<I>
 			container.isEmpty(),
 			"The container you send us for recieving your pre-allocated objects must be sent initially empty because we are not yet prepared for what liabilities would apply..");
 
-		int next = 0;
-		int last = 0;
-
 		leaseLock.lock();
 		try {
 			// Make sure we've got current taste.

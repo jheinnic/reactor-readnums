@@ -1,10 +1,5 @@
 package info.jchein.apps.nr.codetest.ingest.app;
 
-import info.jchein.apps.nr.codetest.ingest.app.console.IConsole;
-import info.jchein.apps.nr.codetest.ingest.config.Constants;
-import info.jchein.apps.nr.codetest.ingest.messages.IInputMessage;
-import info.jchein.apps.nr.codetest.ingest.messages.InputMessage;
-
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -16,6 +11,9 @@ import org.springframework.context.SmartLifecycle;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Scope;
 
+import info.jchein.apps.nr.codetest.ingest.app.console.IConsole;
+import info.jchein.apps.nr.codetest.ingest.config.Constants;
+import info.jchein.apps.nr.codetest.ingest.messages.IInputMessage;
 import reactor.fn.Consumer;
 import reactor.io.buffer.Buffer;
 import reactor.io.codec.Codec;
@@ -51,7 +49,7 @@ implements SmartLifecycle
    public ApplicationWatchdog(
       @NotNull IConsole console,
       @NotNull Codec<Buffer, IInputMessage, IInputMessage> codec,
-      @NotNull Broadcaster<IInputMessage> broadcaster,
+      @NotNull Broadcaster<?> broadcaster,
       @NotNull ConfigurableApplicationContext appCtxt
    ) {
       this.console = console;

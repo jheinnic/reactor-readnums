@@ -16,19 +16,16 @@ package info.jchein.apps.nr.codetest.ingest.reusable;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import com.google.common.base.Preconditions;
 import com.google.common.base.Verify;
 
-import reactor.core.alloc.Recyclable;
+import reactor.core.support.Recyclable;
 
 
 /**
- * {@link reactor.bus.Event} subclass that implements Reusable and therefore can serve as a reference to itself for the
- * sake of being returned to the {@link StrippedReusableObjectAllocator} pool from which it was previously reserved once
- * its allocator no longer has use for it.
+ * {@link Recyclable} and {@link Reusable} implementation that is intended for use through a single write/read cycle and
+ * then returned to the {@link ReusableObjectAllocator} pool from which it was previously reserved once the read phase
+ * of its use lifecycle is complete.
  *
  * When used as an event or messaging payload, it is the allocator's responsibility to ensure that reference counting
  * will only reach 0 after the last recipient has finished their work. In general, this means that the reusable packages
@@ -52,7 +49,7 @@ import reactor.core.alloc.Recyclable;
 public abstract class AbstractReusableObject<I extends IReusable, C extends AbstractReusableObject<I, C>>
 implements IReusableObjectInternal<I>, IReusable, Recyclable
 {
-   private static final Logger LOG = LoggerFactory.getLogger(AbstractReusableObject.class);
+	// private static final Logger LOG = LoggerFactory.getLogger(AbstractReusableObject.class);
 
    // Atomic updater providing atomic access guarantees for reference counter variable, but not responsible for
    // providing a sufficient memory barrier to share subclass state.

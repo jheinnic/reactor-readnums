@@ -2,10 +2,11 @@ package info.jchein.apps.nr.codetest.ingest.perfdata;
 
 import java.lang.reflect.Field;
 
-import reactor.core.support.StringUtils;
-import reactor.jarjar.com.lmax.disruptor.RingBuffer;
+import org.springframework.util.StringUtils;
 
 import com.google.common.base.Preconditions;
+
+import reactor.jarjar.com.lmax.disruptor.RingBuffer;
 
 public final class RingBufferUtils
 {

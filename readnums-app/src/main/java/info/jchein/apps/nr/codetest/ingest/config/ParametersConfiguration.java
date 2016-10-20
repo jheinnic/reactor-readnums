@@ -74,8 +74,8 @@ public class ParametersConfiguration
     | Input Segment Parameters |
     +==========================*/
 
-	@Value("128")
-   public int batchInputRingBufferSize;
+	@Value("32")
+   public int fanOutRingBufferSize;
 
    @Value("4")
    public byte dataPartitionCount;
@@ -117,7 +117,7 @@ public class ParametersConfiguration
     +===============================*/
 
 	@Value("64")
-   public int writeLogRingBufferSize;
+   public int writeOutputRingBufferSize;
 
    // @Value("#{systemProperties.myProp}:numbers.log")
    @Value("numbers.log")

@@ -24,7 +24,7 @@ public interface IInputMessage extends IReusable
 	 * 
 	 * @return The self object
 	 */
-	public InputMessage beforeRead();
+	public IInputMessage beforeRead();
 
 
    public IInputMessage.MessageKind getKind();

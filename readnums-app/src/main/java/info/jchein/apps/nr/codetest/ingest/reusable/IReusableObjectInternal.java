@@ -1,8 +1,5 @@
 package info.jchein.apps.nr.codetest.ingest.reusable;
 
-import reactor.core.alloc.Allocator;
-import reactor.core.alloc.Reference;
-
 /**
  * Non-public implementation glue interface for root of the AbstractReusableObject hierarchy, as part of the
  * info.jchein.apps.nr.codetest.reusable.object package implementation of the abstract interfaces provided by
@@ -35,16 +32,18 @@ extends IReusable
 {
    I castToInterface();
    
-   /**
-    * Atomically increment the reservation from zero to one to begin a new reservation. This method is only intended for
-    * use by a {@link Allocator} managing the object pool an implementing instance came from. It is needed because the
-    * described contract for {@link #retain(int)} may not increase the reference count once it reaches zero. That is a
-    * valid rule to enforce for application consumers, but the object pool origin needs an Exception to that rule in
-    * order to initialize a new Object lease with a reference count of 1 after it was previously expired at 0.
-    * 
-    * @throws IllegalStateException
-    *            if the reference count was not initially 0.
-    */
+   
+	/**
+	 * Atomically increment the reservation from zero to one to begin a new reservation. This method is only intended for
+	 * use by a {@link IReusableObjectAllocator} managing the object pool an implementing instance came from. Its needed
+	 * because {@link #retain(int)} may not increase the reference count from zero, but all unreserved objects initially
+	 * have a reference count value of zero. The object pool origin needs an exception to that rule in order to
+	 * initialize a update a newly leased Object to have a non-zero reference count after it had previously expired (or
+	 * was just created) at 0.
+	 * 
+	 * @throws IllegalStateException
+	 *            if the reference count was not initially 0.
+	 */
    int reserve();
 
 

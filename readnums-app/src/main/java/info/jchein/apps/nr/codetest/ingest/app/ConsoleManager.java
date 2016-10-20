@@ -1,14 +1,13 @@
 package info.jchein.apps.nr.codetest.ingest.app;
 
-import info.jchein.apps.nr.codetest.ingest.app.console.IConsole;
-import info.jchein.apps.nr.codetest.ingest.config.Constants;
-import info.jchein.apps.nr.codetest.ingest.messages.IInputMessage;
-
 import javax.validation.constraints.NotNull;
 
 import org.reactivestreams.Subscriber;
 import org.springframework.beans.factory.annotation.Qualifier;
 
+import info.jchein.apps.nr.codetest.ingest.app.console.IConsole;
+import info.jchein.apps.nr.codetest.ingest.config.Constants;
+import info.jchein.apps.nr.codetest.ingest.messages.IInputMessage;
 import reactor.fn.Consumer;
 import reactor.io.buffer.Buffer;
 import reactor.io.codec.Codec;
@@ -23,7 +22,7 @@ implements Runnable
    private final Codec<Buffer, IInputMessage, IInputMessage> codec;
 
    @NotNull
-   private final Subscriber<IInputMessage> inputBroadcaster;
+	private final Subscriber<?> inputBroadcaster;
 
    @NotNull
    private final Consumer<Void> terminateAppConsumer;
@@ -32,7 +31,7 @@ implements Runnable
    ConsoleManager(
       @NotNull IConsole console,
       @NotNull Codec<Buffer,IInputMessage,IInputMessage> codec,
-      @NotNull Subscriber<IInputMessage> inputBroadcaster,
+		@NotNull Subscriber<?> inputBroadcaster,
       @NotNull @Qualifier(Constants.TERMINATE_INGEST_APPLICATION) Consumer<Void> terminateAppConsumer
    ) {
       this.console = console;
@@ -61,7 +60,8 @@ implements Runnable
             }
             case NINE_DIGITS: {
                console.format("Forwarding %s as though it had been read from an open socket\n", input);
-               inputBroadcaster.onNext(msg);
+					// TODO: REPAIR THIS
+					// inputBroadcaster.onNext(msg);
                quitting = false;
             }
             case INVALID_INPUT: {

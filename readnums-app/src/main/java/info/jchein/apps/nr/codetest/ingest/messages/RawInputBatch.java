@@ -21,8 +21,9 @@ public class RawInputBatch
 extends AbstractReusableObject<IRawInputBatch, RawInputBatch>
 implements IRawInputBatch
 {
-   final int[] batchBuffer;
-   final byte[] xferBytes;
+	// final ByteBuffer batchBuffer;
+	final int[] batchBuffer;
+	final byte[] xferBytes;
    private int entryCount;
    private int skipCount;
 
@@ -33,7 +34,8 @@ implements IRawInputBatch
    public RawInputBatch( final OnReturnCallback releaseCallback, final int poolIndex, final int flushAfterNInputs )
    {
       super(releaseCallback, poolIndex);
-      batchBuffer = new int[flushAfterNInputs+1];
+		// batchBuffer = ByteBuffer.allocate(flushAfterNInputs * Constants.FILE_ENTRY_SIZE);
+		batchBuffer = new int[flushAfterNInputs + 1];
       entryCount = 0;
       skipCount = 0;
 
