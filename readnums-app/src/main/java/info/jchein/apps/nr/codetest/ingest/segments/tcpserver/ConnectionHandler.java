@@ -9,13 +9,14 @@ import org.slf4j.LoggerFactory;
 
 import info.jchein.apps.nr.codetest.ingest.messages.IInputMessage;
 import io.netty.channel.Channel;
+import reactor.core.Dispatcher;
 import reactor.fn.Consumer;
 import reactor.io.net.ChannelStream;
 import reactor.io.net.ReactorChannelHandler;
 import reactor.rx.Stream;
 import reactor.rx.Streams;
 import reactor.rx.broadcast.Broadcaster;
-
+import reactor.rx.stream.GroupedStream;
 
 public class ConnectionHandler
 implements ReactorChannelHandler<IInputMessage, IInputMessage, ChannelStream<IInputMessage, IInputMessage>>
@@ -32,23 +33,25 @@ implements ReactorChannelHandler<IInputMessage, IInputMessage, ChannelStream<IIn
    private static final int ALLOCATION_FAILURE = -1;
 
    private final int maxConcurrentSockets;
-   private final Broadcaster<Stream<IInputMessage>> streamsToMerge;
-   private final Consumer<Void> terminationConsumer;
-
+	private final Consumer<Void> terminationConsumer;
+	private final Broadcaster<Stream<GroupedStream<Integer, IInputMessage>>> streamsToMerge;
+	private final Dispatcher socketHandoffDispatcher;
    private final AtomicReference<SocketRegistry> socketRegistryHolder;
 
 
-   public ConnectionHandler(
-      final int maxConcurrentSockets,
-      final Broadcaster<Stream<IInputMessage>> streamsToMerge,
-      final Consumer<Void> terminationConsumer )
-   {
-      this.maxConcurrentSockets = maxConcurrentSockets;
-      this.streamsToMerge = streamsToMerge;
-      this.terminationConsumer = terminationConsumer;
 
-      final SocketRegistry registryImpl = new SocketRegistry(maxConcurrentSockets);
-      socketRegistryHolder = new AtomicReference<SocketRegistry>(registryImpl);
+	public ConnectionHandler(
+		final int maxConcurrentSockets, final Consumer<Void> terminationConsumer,
+		final Dispatcher socketHandoffDispatcher,
+		final Broadcaster<Stream<GroupedStream<Integer, IInputMessage>>> streamsToMerge )
+	{
+      this.maxConcurrentSockets = maxConcurrentSockets;
+		this.terminationConsumer  = terminationConsumer;
+		this.socketHandoffDispatcher = socketHandoffDispatcher;
+      this.streamsToMerge       = streamsToMerge;
+		this.socketRegistryHolder = 
+			new AtomicReference<>(
+				new SocketRegistry(maxConcurrentSockets));
    }
 
 
@@ -56,12 +59,12 @@ implements ReactorChannelHandler<IInputMessage, IInputMessage, ChannelStream<IIn
    public Publisher<Void> apply(final ChannelStream<IInputMessage, IInputMessage> channelStream)
    {
       LOG.info("In connection handler");
-      if (onConnected(channelStream) != null) {
+		if (onConnected(channelStream) != null) {
          channelStream.on().close(v -> onDisconnected(channelStream));
       };
 
       streamsToMerge.onNext(
-         channelStream.filter( evt -> {
+         channelStream.filter(evt -> {
             switch (evt.getKind()) {
                case NINE_DIGITS: {
                   return true;
@@ -77,39 +80,29 @@ implements ReactorChannelHandler<IInputMessage, IInputMessage, ChannelStream<IIn
             }
 
             return false;
-         })
+         }).groupBy(evt -> {
+				return Byte.toUnsignedInt(evt.getPartitionIndex());
+			})
       );
 
       // This server has no need to write data back out to the client, so wire the to-Client duplex side of
       // channelStream to process a Stream that contains zero message signals followed by an onComplete signal. Make
       // sure the data flows through the channelStream's write subscriber and isn't just passively available as the next
-      // signal ready for delivery. writeWIth is a passive observer that does NOT generate demand of its own, but it
+		// signal ready for delivery. writeWith is a passive observer that does NOT generate demand of its own, but it
       // will process any row that moves through it to satisfy a downstream Processor or a hot downstream Stream segment.
-      LOG.info("Addressing write stream and returning...");
-      final Stream<IInputMessage> noData = Streams.empty();
-      noData.consume();
+		LOG.info("Holding write channel open on a Stream with no data that never completes.");
+		final Stream<IInputMessage> noData = Streams.never();
+		noData.consume();
+		// LOG.info("Consuming never...");
       return channelStream.writeWith(noData);
    }
 
 
-//   public Publisher<Void> oldLogic(final ChannelStream<IInputMessage,IInputMessage> channelStream) {
-//      final ChannelStreamController<IInputMessage> channelStreamManager =
-//         onConnected(channelStream);
-//      if (channelStreamManager != null) {
-//         channelStream.on().close(v -> onDisconnected(channelStream));
-//         channelStreamManager.routeMessagesTo(streamsToMerge);
-//      };
-//
-//      final Stream<IInputMessage> outputStream = Streams.empty();
-//      outputStream.consume();  // <-- Creates demand needed to pull empty()'s onComplete signal through writeWith()
-//      return channelStream.writeWith(outputStream);
-//   }
-
-
-   private ChannelStreamController<IInputMessage> onConnected(final ChannelStream<IInputMessage, IInputMessage> channelStream)
+	private ChannelStreamController<IInputMessage>
+	onConnected(final ChannelStream<IInputMessage, IInputMessage> channelStream)
    {
-      final ChannelStreamController<IInputMessage> controller =
-         new ChannelStreamController<IInputMessage>(channelStream);
+		final ChannelStreamController<IInputMessage> controller =
+			new ChannelStreamController<>(channelStream);
 
       // Attempt to reserve a connection slot and atomically update the registry. If unsuccessful, use the function
       // generated above to abort the connection. Otherwise, return the ConnectionContext object created for the newly
@@ -149,7 +142,7 @@ implements ReactorChannelHandler<IInputMessage, IInputMessage, ChannelStream<IIn
             new Object[] { channel.remoteAddress(), channel.localAddress() });
       }
 
-      return (socketIdx != ALLOCATION_FAILURE) ? controller : null;
+		return (socketIdx != ALLOCATION_FAILURE) ? controller : null;
    }
 
 
@@ -182,7 +175,13 @@ implements ReactorChannelHandler<IInputMessage, IInputMessage, ChannelStream<IIn
 
    private void closeChannel(final ChannelStream<IInputMessage, IInputMessage> channelStream)
    {
-      final ChannelStreamController<IInputMessage> resourceAdapter =
+      final Channel channel = (Channel) channelStream.delegate();
+   	LOG.info(String.format(
+   		"In closeChannel() for connection from %s to %s",
+         channel.remoteAddress().toString(),
+         channel.localAddress().toString()));
+   		
+   	final ChannelStreamController<IInputMessage> resourceAdapter =
          socketRegistryHolder.get()
          .lookupResourceAdapter(channelStream);
       if (resourceAdapter.call() == false) throw new CloseConnectionFailedException(channelStream);

@@ -1,10 +1,6 @@
 package info.jchein.apps.nr.codetest.ingest.segments.tcpserver;
 
 
-import info.jchein.apps.nr.codetest.ingest.lifecycle.LifecycleStage;
-import io.netty.channel.Channel;
-import io.netty.channel.ChannelPipeline;
-
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Phaser;
@@ -17,6 +13,11 @@ import org.reactivestreams.Subscription;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.google.common.collect.ImmutableList;
+
+import info.jchein.apps.nr.codetest.ingest.lifecycle.LifecycleStage;
+import io.netty.channel.Channel;
+import io.netty.channel.ChannelPipeline;
 import reactor.core.Dispatcher;
 import reactor.core.dispatch.SynchronousDispatcher;
 import reactor.core.dispatch.TailRecurseDispatcher;
@@ -28,19 +29,17 @@ import reactor.rx.action.Control;
 import reactor.rx.broadcast.Broadcaster;
 import reactor.rx.subscription.PushSubscription;
 
-import com.google.common.collect.ImmutableList;
-
 
 public class ChannelStreamController<IN>
 implements Callable<Boolean>
 {
-   private static final Logger LOG = LoggerFactory.getLogger(ChannelStreamController.class);
+	static final Logger LOG = LoggerFactory.getLogger(ChannelStreamController.class);
 
    private final ChannelStream<IN, ?> channelStream;
    private final ChannelPipeline pipeline;
-   private final AtomicReference<ImmutableList<EndOfStreamAction>> channelTerminations; 
    
-   private final Phaser eosMonitorPhaser = new Phaser(1) {
+	final AtomicReference<ImmutableList<EndOfStreamAction>> channelTerminations;
+	final Phaser eosMonitorPhaser = new Phaser(1) {
       @Override
       protected boolean onAdvance(int phase, int registeredParties) {
          return true;
@@ -56,10 +55,9 @@ implements Callable<Boolean>
    {
       this.channelStream = channelStream;
       this.pipeline = ((Channel) channelStream.delegate()).pipeline();
-      this.channelTerminations =
-         new AtomicReference<ImmutableList<EndOfStreamAction>>(
-            ImmutableList.<EndOfStreamAction>builder().build()
-         );
+		this.channelTerminations = new AtomicReference<>(
+         ImmutableList.<EndOfStreamAction>builder().build()
+      );
    }
 
    
@@ -201,8 +199,8 @@ implements Callable<Boolean>
       
       @Override
       protected void doOnSubscribe(Subscription sub) {
-         // Add one to the number of deregistrations needed before the eosMonitor will allow the
-         // final deregistration in callShutdown (Callable.call()) to return successfully.
+			// Add one to the number of arrivals needed before the eosMonitor will allow the
+			// final arrival in callShutdown (Callable.call()) to return successfully.
          ChannelStreamController.this.eosMonitorPhaser.register();
 
          ImmutableList<EndOfStreamAction> previousList = null;

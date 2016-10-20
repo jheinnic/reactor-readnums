@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import info.jchein.apps.nr.codetest.ingest.lifecycle.AbstractSegment;
+import info.jchein.apps.nr.codetest.ingest.messages.IRawInputBatch;
 import info.jchein.apps.nr.codetest.ingest.messages.IWriteFileBuffer;
 import info.jchein.apps.nr.codetest.ingest.reusable.IReusableAllocator;
 import reactor.bus.Event;
@@ -51,7 +52,9 @@ extends AbstractSegment
 		};
 
       filledBufferStream =
-         batchedInputSegment.getBatchedRawDataStream()
+         batchedInputSegment.getLoadedWriteFileBufferStream()
+			.cast(IRawInputBatch.class) // TODO: If this class goes away, it won't matter that this is just silencing
+												 // errors!
          .map( evt -> {
             final IWriteFileBuffer retVal;
 				if (evt.transferToFileBuffer(activeBufferRef[0])) {

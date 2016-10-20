@@ -22,6 +22,7 @@ import info.jchein.apps.nr.codetest.ingest.perfdata.ResourceStatsAdapter;
 import info.jchein.apps.nr.codetest.ingest.reusable.IReusableAllocator;
 import reactor.bus.Event;
 import reactor.bus.EventBus;
+import reactor.core.Dispatcher;
 import reactor.fn.Function;
 import reactor.rx.Stream;
 import reactor.rx.Streams;
@@ -40,8 +41,9 @@ implements IStatsProviderSupplier
 	private static final Logger LOG = LoggerFactory.getLogger(WriteOutputFileSegment.class);
 
 	private final File outputLogFile;
-	private final byte concurrentFileWriters;
-	private final FillWriteBuffersSegment fillWriteBuffersSegment;
+	private final short concurrentFileWriters;
+	private final BatchInputSegment batchInputSegment;
+	private final Dispatcher writeOutputFileDispatcher;
 	private final Processor<IWriteFileBuffer, IWriteFileBuffer> writeOutputFileWorkProcessor;
 	private final IReusableAllocator<ICounterIncrements> counterIncrementsAllocator;
 
@@ -49,15 +51,17 @@ implements IStatsProviderSupplier
 	private Stream<Stream<ICounterIncrements>> reportCounterIncrementsStream;
 
 
-	public WriteOutputFileSegment( final String outputFilePath, final byte concurrentFileWriters,
-		final EventBus eventBus, final FillWriteBuffersSegment fillWriteBuffersSegment,
+	public WriteOutputFileSegment( final String outputFilePath, final short concurrentFileWriters,
+		final EventBus eventBus, final BatchInputSegment batchInputSegment,
+		final Dispatcher writeOutputFileDispatcher,
 		final Processor<IWriteFileBuffer, IWriteFileBuffer> writeOutputFileWorkProcessor,
 		final IReusableAllocator<ICounterIncrements> counterIncrementsAllocator )
 	{
 		super(eventBus);
 		this.concurrentFileWriters = concurrentFileWriters;
-		outputLogFile = new File(outputFilePath);
-		this.fillWriteBuffersSegment = fillWriteBuffersSegment;
+		this.outputLogFile = new File(outputFilePath);
+		this.batchInputSegment = batchInputSegment;
+		this.writeOutputFileDispatcher = writeOutputFileDispatcher;
 		this.writeOutputFileWorkProcessor = writeOutputFileWorkProcessor;
 		this.counterIncrementsAllocator = counterIncrementsAllocator;
 	}
@@ -83,13 +87,13 @@ implements IStatsProviderSupplier
 
 			for (byte ii = 0; ii < concurrentFileWriters; ii++) {
 				final Stream<IWriteFileBuffer> partitionedStreamRoot =
-					fillWriteBuffersSegment.getFilledBufferStream()
+					batchInputSegment.getLoadedWriteFileBufferStream()
 						.process(writeOutputFileWorkProcessor);
 				partitions.add(partitionedStreamRoot.map(writeBuffer -> processBatch(writeBuffer)));
 			}
 			reportCounterIncrementsStream = Streams.from(partitions);
 		} else {
-			reportCounterIncrementsStream = fillWriteBuffersSegment.getFilledBufferStream()
+			reportCounterIncrementsStream = batchInputSegment.getLoadedWriteFileBufferStream()
 				.process(writeOutputFileWorkProcessor)
 				.map(writeBuffer -> processBatch(writeBuffer))
 				.nest();
@@ -135,7 +139,7 @@ implements IStatsProviderSupplier
 
 		try {
 			int bytesWritten = 0;
-			int passCount = 0;
+			short passCount = 0;
 			final FileChannel outputChannel = outputFileStream.getChannel();
 			while ((bytesWritten >= 0) && buf.hasRemaining()) {
 				bytesWritten = outputChannel.write(buf, writeOffset);

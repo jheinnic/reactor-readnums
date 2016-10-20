@@ -4,22 +4,21 @@ package info.jchein.apps.nr.codetest.ingest.segments.logunique;
 import java.util.ArrayList;
 import java.util.concurrent.TimeUnit;
 
-import org.reactivestreams.Processor;
-
 import info.jchein.apps.nr.codetest.ingest.lifecycle.AbstractSegment;
 import info.jchein.apps.nr.codetest.ingest.messages.IInputMessage;
-import info.jchein.apps.nr.codetest.ingest.messages.IRawInputBatch;
+import info.jchein.apps.nr.codetest.ingest.messages.IWriteFileBuffer;
 import info.jchein.apps.nr.codetest.ingest.perfdata.IStatsProvider;
 import info.jchein.apps.nr.codetest.ingest.perfdata.IStatsProviderSupplier;
 import info.jchein.apps.nr.codetest.ingest.perfdata.ResourceStatsAdapter;
 import info.jchein.apps.nr.codetest.ingest.reusable.IReusableAllocator;
 import reactor.bus.Event;
 import reactor.bus.EventBus;
+import reactor.core.Dispatcher;
 import reactor.fn.Function;
 import reactor.fn.timer.Timer;
 import reactor.rx.Stream;
-import reactor.rx.Streams;
 import reactor.rx.broadcast.Broadcaster;
+import reactor.rx.stream.GroupedStream;
 
 
 public class BatchInputSegment
@@ -34,18 +33,24 @@ implements IStatsProviderSupplier
 	private final byte numDataPartitions;
 	private final Timer ingestionTimer;
 	private final IUniqueMessageTrie uniqueTest;
-	private final Broadcaster<Stream<IInputMessage>> streamsToMerge;
-	private final IReusableAllocator<IRawInputBatch> rawInputBatchAllocator;
-	private final Processor<IInputMessage, IInputMessage>[] fanOutProcessors;
+	private final Broadcaster<Stream<GroupedStream<Integer, IInputMessage>>> streamsToMerge;
+	private final IReusableAllocator<IWriteFileBuffer> writeFileBufferAllocator;
+	// private final Processor<GroupedStream<Integer, IInputMessage>, GroupedStream<Integer, IInputMessage>>[]
+	// fanOutProcessors;
+	private final Dispatcher socketHandoffDispatcher;
+	private final Dispatcher[] fanOutDispatchers;
 
-	private Stream<IRawInputBatch> loadedRawInputBatchStream;
+	private Stream<IWriteFileBuffer> loadedWriteFileBufferStream;
 
 
 	public BatchInputSegment( final short ioCount, final long ioPeriod, final TimeUnit ioTimeUnit,
 		final byte numDataPartitions, final EventBus eventBus, final Timer ingestionTimer,
-		final IUniqueMessageTrie uniqueTest, final Broadcaster<Stream<IInputMessage>> streamsToMerge,
-		final IReusableAllocator<IRawInputBatch> rawInputBatchAllocator,
-		final Processor<IInputMessage, IInputMessage>[] fanOutProcessors )
+		final IUniqueMessageTrie uniqueTest,
+		final Broadcaster<Stream<GroupedStream<Integer, IInputMessage>>> streamsToMerge,
+		final IReusableAllocator<IWriteFileBuffer> writeFileBufferAllocator,
+		final Dispatcher socketHandoffDispatcher,
+		final Dispatcher[] fanOutDispatchers )
+		// final Processor<GroupedStream<Integer, IInputMessage>, GroupedStream<Integer, IInputMessage>>[] fanOutDispatchers )
 	{
 		super(eventBus);
 		this.ioCount = ioCount;
@@ -55,9 +60,9 @@ implements IStatsProviderSupplier
 		this.ingestionTimer = ingestionTimer;
 		this.numDataPartitions = numDataPartitions;
 		this.streamsToMerge = streamsToMerge;
-		this.rawInputBatchAllocator = rawInputBatchAllocator;
-		this.fanOutProcessors = fanOutProcessors;
-
+		this.socketHandoffDispatcher = socketHandoffDispatcher;
+		this.writeFileBufferAllocator = writeFileBufferAllocator;
+		this.fanOutDispatchers = fanOutDispatchers;
 	}
 
 
@@ -71,45 +76,51 @@ implements IStatsProviderSupplier
 	@Override
 	protected Function<Event<Long>, Boolean> doStart()
 	{
-		loadedRawInputBatchStream = streamsToMerge.startWith(Streams.<IInputMessage> never())
-			.<IInputMessage> merge()
-			.observe(evt -> evt.beforeRead())
-			.filter(evt -> evt.getPartitionIndex() >= 0)
-			.groupBy(evt -> Byte.valueOf(evt.getPartitionIndex()))
-			.<IRawInputBatch> flatMap(partitionStream -> {
-				final byte partitionIndex = partitionStream.key()
-					.byteValue();
+		// this.streamsToMerge begins as:
+		// -- A Stream of:
+		// -- Streams per TCP Channel of:
+		// -- Streams, each keyed by a Data Partition index and made of:
+		// -- InputMessages from the same Data Partition index
+		// First flatten out each TCP Channel's stream to yield:
+		// -- A Stream of
+		// -- Streams, each keyed by a Data Partition index and made of:
+		// -- InputMessages from the same Data Partition index
+		// Dispatch each of the nested streams to a worker dedicated to the stream's
+		// associated data partition index. Do all remaining work on that thread.
+		// -- Flatten down to a data partitioned Stream of InputMessages
+		// -- Apply filtering test for uniqueness
+		// -- Load a merged write buffer and counters
+		// -- Dispatch to the I/O thread
+		this.loadedWriteFileBufferStream = this.streamsToMerge.subscribeOn(this.socketHandoffDispatcher)
+			.<GroupedStream<Integer, IInputMessage>> merge()
+			.<Integer> groupBy(channelSubStream -> channelSubStream.key())
+			.<IWriteFileBuffer> flatMap(
+				partitionStream -> partitionStream
+					.subscribeOn(this.fanOutDispatchers[partitionStream.key()])
+					.<IInputMessage> merge()
+					.window(this.ioCount, this.ioPeriod, this.ioTimeUnit, this.ingestionTimer)
+					.<IWriteFileBuffer> flatMap(nestedWindow -> {
+						return nestedWindow.reduce(
+							this.writeFileBufferAllocator.allocate(),
+							(final IWriteFileBuffer writeBuf, final IInputMessage msg) -> {
+							msg.beforeRead();
+							if (this.uniqueTest.isUnique(msg.getPrefix(), msg.getSuffix()))
+								writeBuf.acceptUniqueInput(msg.getMessageBytes());
+							else writeBuf.trackSkippedDuplicates(1);
+							msg.release();
 
-				return partitionStream.process(fanOutProcessors[partitionIndex])
-					// .observe(evt -> evt.beforeRead())
-					.window(ioCount, ioPeriod, ioTimeUnit, ingestionTimer)
-					.<IRawInputBatch> flatMap(nestedWindow -> {
-						return nestedWindow/* .log("Input") */.reduce(
-							rawInputBatchAllocator.allocate(),
-							(final IRawInputBatch batch, final IInputMessage msg) -> {
-								msg.beforeRead();
-								if (uniqueTest.isUnique(msg.getPrefix(), msg.getSuffix())) {
-									batch.acceptUniqueInput(msg.getMessage());
-									msg.release();
-								} else {
-									msg.release();
-									batch.trackSkippedDuplicate();
-								}
-		
-								return batch;
-							}
-						).observe(writeBuf -> writeBuf.afterWrite());
-					}
-				);
-			});
+							return writeBuf;
+						})
+							.<IWriteFileBuffer> map(writeBuf -> writeBuf.afterWrite());
+					}));
 
 		return evt -> Boolean.TRUE;
 	}
 
 
-	public Stream<IRawInputBatch> getBatchedRawDataStream()
+	public Stream<IWriteFileBuffer> getLoadedWriteFileBufferStream()
 	{
-		return loadedRawInputBatchStream;
+		return loadedWriteFileBufferStream;
 	}
 
 
@@ -120,7 +131,7 @@ implements IStatsProviderSupplier
 		for (int ii = 0; ii < numDataPartitions; ii++) {
 			retVal.add(
 				new ResourceStatsAdapter(
-					"Partitioned Input RingBufferProcessor-" + ii, fanOutProcessors[ii]));
+					"Partitioned Input RingBufferProcessor-" + ii, fanOutDispatchers[ii]));
 		}
 		return retVal;
 	}
