@@ -63,24 +63,26 @@ implements ReactorChannelHandler<IInputMessage, IInputMessage, ChannelStream<IIn
          channelStream.on().close(v -> onDisconnected(channelStream));
       };
 
-      streamsToMerge.onNext(
-         channelStream.filter(evt -> {
-            switch (evt.getKind()) {
-               case NINE_DIGITS: {
-                  return true;
-               }
-               case TERMINATE_CMD: {
-                  terminationConsumer.accept(null);
-                  closeChannel(channelStream);
-                  break;
-               }
-               case INVALID_INPUT: {
-                  closeChannel(channelStream);
-               }
-            }
+		this.streamsToMerge.onNext(
+			channelStream.dispatchOn(this.socketHandoffDispatcher)
+			.filter(evt -> {
+				switch (evt.getKind()) {
+					case NINE_DIGITS: {
+						return true;
+					}
+					case TERMINATE_CMD: {
+						terminationConsumer.accept(null);
+						closeChannel(channelStream);
+						break;
+					}
+					case INVALID_INPUT: {
+						closeChannel(channelStream);
+					}
+				}
 
-            return false;
-         }).groupBy(evt -> {
+				return false;
+			})
+			.groupBy(evt -> {
 				return Byte.toUnsignedInt(evt.getPartitionIndex());
 			})
       );

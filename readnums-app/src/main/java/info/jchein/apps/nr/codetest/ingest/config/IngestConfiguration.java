@@ -211,7 +211,8 @@ public class IngestConfiguration
    ConnectionHandler connectionHandler( final Consumer<Void> terminationConsumer )
    {
       return new ConnectionHandler(
-			paramsConfig.maxConcurrentSockets, terminationConsumer, streamsToMerge());
+			paramsConfig.maxConcurrentSockets, terminationConsumer, socketHandoffDispatcher(),
+			streamsToMerge());
    }
 
 
