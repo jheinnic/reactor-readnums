@@ -99,11 +99,7 @@ extends AbstractSegment
       final Condition completed = shutdownLock.newCondition();
 
 		writeOutputFileSegment.getReportCounterIncrementsStream()
-			// .mergeWith(Streams.period(reportTimer, reportIntervalInSeconds)
-			// .map(evt -> counterIncrementsAllocator.allocate()
-			// .setDeltas(0, 0))
-			// .log("pulse"))
-			.process(counterIncrementsProcessor)
+			// .process(counterIncrementsProcessor)
 			.observeCancel(evt -> {
 				// Toggle the first seenOnComplete flag once input to the final window is recognized by
 				// observing a SHUTDOWN event being fed to the window boundary. Note that we are taking

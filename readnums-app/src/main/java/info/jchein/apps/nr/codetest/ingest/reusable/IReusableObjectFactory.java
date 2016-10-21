@@ -4,19 +4,20 @@ package info.jchein.apps.nr.codetest.ingest.reusable;
 import javax.validation.constraints.Min;
 import javax.validation.constraints.NotNull;
 
+
 /**
- * Factory instance used by a {@link ReusableAllocator<?>} to populate its pool of reusable object.  It is meant
- * to be implemented by developers to provide any specialized construction semantics needed to satisfy their
- * reusable artifact's template requirements, if any.
+ * Factory instance used by a {@link ReusableAllocator<?>} to populate its pool of reusable object. It is meant to be
+ * implemented by developers to provide any specialized construction semantics needed to satisfy their reusable
+ * artifact's template requirements, if any.
  * 
- * An example use involves creating payload objects that contain some variable sized resource, such as a BitSet
- * or ArrayList, that must be initialized with the same sizing parameters in each instance of a reusable object
- * pool.  In this example, a developer would store sizing parameters inside a ReusableFactory and supply them
- * to the Reusable object's constructor from {@link IReusableObjectFactory#apply(OnReturnCallback, int)}.
+ * An example use involves creating message objects that contain some variable sized resource, such as a BitSet or
+ * ArrayList, that must be initialized with the same sizing parameters in each instance of a reusable object pool. In
+ * this example, a developer would store sizing parameters inside a ReusableFactory and supply them to the Reusable
+ * object's constructor from {@link IReusableObjectFactory#apply(OnReturnCallback, int)}.
  *
- * @param <T> Subclass of Reusable<T> that implementation yields when {@link #apply(OnReturnCallback, int)}
- *             is called. 
-  
+ * @param <T>
+ *           Subclass of Reusable<T> that implementation yields when {@link #apply(OnReturnCallback, int)} is called.
+ * 
  * @author John Heinnickel
  */
 @FunctionalInterface

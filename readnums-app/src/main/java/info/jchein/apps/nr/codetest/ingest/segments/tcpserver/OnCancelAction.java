@@ -1,10 +1,10 @@
 package info.jchein.apps.nr.codetest.ingest.segments.tcpserver;
 
+import com.google.common.base.Verify;
+
 import reactor.fn.Consumer;
 import reactor.fn.Supplier;
 import reactor.rx.action.Action;
-
-import com.google.common.base.Verify;
 
 public class OnCancelAction<T>
 extends Action<T, T>
@@ -17,7 +17,7 @@ extends Action<T, T>
    }
    
    public static <T> Supplier<Action<T,T>> supply(Consumer<Void> onCancel) {
-      return () -> new OnCancelAction<T>(onCancel);
+		return () -> new OnCancelAction<>(onCancel);
    }
 
    @Override

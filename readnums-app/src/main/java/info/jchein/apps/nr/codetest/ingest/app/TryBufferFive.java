@@ -9,21 +9,21 @@ import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
 
 import org.reactivestreams.Processor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import info.jchein.apps.nr.codetest.ingest.messages.CounterIncrementsAllocator;
+import info.jchein.apps.nr.codetest.ingest.messages.CounterIncrements;
 import info.jchein.apps.nr.codetest.ingest.messages.ICounterIncrements;
 import info.jchein.apps.nr.codetest.ingest.messages.IInputMessage;
 import info.jchein.apps.nr.codetest.ingest.messages.IRawInputBatch;
 import info.jchein.apps.nr.codetest.ingest.messages.IWriteFileBuffer;
-import info.jchein.apps.nr.codetest.ingest.messages.InputMessageAllocator;
-import info.jchein.apps.nr.codetest.ingest.messages.RawInputBatchAllocator;
-import info.jchein.apps.nr.codetest.ingest.messages.WriteFileBufferAllocator;
+import info.jchein.apps.nr.codetest.ingest.messages.InputMessage;
+import info.jchein.apps.nr.codetest.ingest.messages.RawInputBatch;
+import info.jchein.apps.nr.codetest.ingest.messages.WriteFileBuffer;
 import info.jchein.apps.nr.codetest.ingest.reusable.IReusableAllocator;
+import info.jchein.apps.nr.codetest.ingest.reusable.ReusableObjectAllocator;
 import info.jchein.apps.nr.codetest.ingest.segments.logunique.FailedWriteException;
 import info.jchein.apps.nr.codetest.ingest.segments.logunique.IUniqueMessageTrie;
 import info.jchein.apps.nr.codetest.ingest.segments.logunique.UniqueMessageTrie;
@@ -57,7 +57,8 @@ public class TryBufferFive
    private static final Logger LOG = LoggerFactory.getLogger(TryBufferFive.class);
 
 
-   public static void main(final String[] args) throws InterruptedException
+   @SuppressWarnings("unchecked")
+	public static void main(final String[] args) throws InterruptedException
    {
       final byte numDataPartitions = (byte) 4;
 
@@ -66,17 +67,18 @@ public class TryBufferFive
 				LOG.error("Envrionment was asked to route unhandled exception: ", err);
 			});
 
-      final IReusableAllocator<IInputMessage> msgAlloc =
-      	new InputMessageAllocator(2097152, false);
+		final ReusableObjectAllocator<IInputMessage, InputMessage> msgAlloc =
+			new ReusableObjectAllocator<>(2048, null);
 
-      final IReusableAllocator<IRawInputBatch> batchAlloc =
-         new RawInputBatchAllocator(1024, false, 3000);
+		final ReusableObjectAllocator<IRawInputBatch, RawInputBatch> batchAlloc =
+			new ReusableObjectAllocator<>(1024, null);
 
-      final WriteFileBufferAllocator writeBufAlloc =
-			new WriteFileBufferAllocator(4096, false, 3072, new AtomicLong(0));
+		final ReusableObjectAllocator<IWriteFileBuffer, WriteFileBuffer> writeBufAlloc =
+			new ReusableObjectAllocator<>(4096, null);
 
-      final IReusableAllocator<ICounterIncrements> counterAlloc =
-         new CounterIncrementsAllocator(2048, false);
+		final ReusableObjectAllocator<ICounterIncrements, CounterIncrements> counterAlloc =
+			new ReusableObjectAllocator<>(2048, null);
+
 
       final Codec<Buffer, IInputMessage, IInputMessage> msgCodec =
 			new DelimitedCodec<>(
@@ -150,10 +152,8 @@ public class TryBufferFive
             final byte partitionIndex =
                partitionStream.key().byteValue();
 
-            return
-            partitionStream
-//                  .log("rawInputFromStream")
-            .process((Processor<IInputMessage, IInputMessage>) fanOutProcessors[partitionIndex])
+            return partitionStream.process(
+            	(Processor<IInputMessage, IInputMessage>) fanOutProcessors[partitionIndex])
 //                  .log("rawInputFromProcessor")
             .window(64, 6000, TimeUnit.MILLISECONDS, workTimer)
             .<IRawInputBatch> flatMap( nestedWindow -> {

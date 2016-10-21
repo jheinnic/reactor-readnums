@@ -32,7 +32,7 @@ public class EventConfiguration
 		// return new InputMessageAllocator(2 * parametersConfiguration.peakExpectedInputsInFlight, false);
 		return new ReusableObjectAllocator<IInputMessage, InputMessage>(
 			2 * paramsConfig.peakExpectedInputsInFlight,
-			(callback, index) -> new InputMessage(callback, index), false);
+			(callback, index) -> new InputMessage(callback, index));
    }
 
 
@@ -69,8 +69,7 @@ public class EventConfiguration
 
 		return new ReusableObjectAllocator<IWriteFileBuffer, WriteFileBuffer>(
 			initialCount, 
-			(callback, index) -> new WriteFileBuffer(callback, index, nextWriteOffset, bufferMaxMsgs),
-			false);
+			(callback, index) -> new WriteFileBuffer(callback, index, nextWriteOffset, bufferMaxMsgs));
    }
 
 
@@ -84,7 +83,7 @@ public class EventConfiguration
 			RingBufferUtils.nextSmallestPowerOf2(paramsConfig.peakUnwrittenOutputBuffersExpected);
 
 		return new ReusableObjectAllocator<ICounterIncrements, CounterIncrements>(
-			initialCount, (callback, index) -> new CounterIncrements(callback, index), false);
+			initialCount, (callback, index) -> new CounterIncrements(callback, index));
    }
 
    // @Bean

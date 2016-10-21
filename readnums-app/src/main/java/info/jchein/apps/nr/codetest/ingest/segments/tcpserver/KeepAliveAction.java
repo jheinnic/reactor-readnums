@@ -10,7 +10,7 @@ extends Action<T, T>
    }
    
    public static <T> Supplier<Action<T,T>> supply() {
-      return () -> new KeepAliveAction<T>();
+		return () -> new KeepAliveAction<>();
    }
 
    @Override

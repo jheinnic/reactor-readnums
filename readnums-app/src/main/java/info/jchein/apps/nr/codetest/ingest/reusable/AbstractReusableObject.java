@@ -14,7 +14,7 @@
 package info.jchein.apps.nr.codetest.ingest.reusable;
 
 
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 
 import com.google.common.base.Preconditions;
 import com.google.common.base.Verify;
@@ -53,9 +53,9 @@ implements IReusableObjectInternal<I>, IReusable, Recyclable
 
    // Atomic updater providing atomic access guarantees for reference counter variable, but not responsible for
    // providing a sufficient memory barrier to share subclass state.
-	// @SuppressWarnings("rawtypes")
-	// private static AtomicIntegerFieldUpdater<AbstractReusableObject> ATOMIC_REF_COUNT_UPDATE =
-	// AtomicIntegerFieldUpdater.newUpdater(AbstractReusableObject.class, "refCnt");
+	@SuppressWarnings("rawtypes")
+	private static AtomicIntegerFieldUpdater<AbstractReusableObject> ATOMIC_REF_COUNT_UPDATE =
+		AtomicIntegerFieldUpdater.newUpdater(AbstractReusableObject.class, "refCnt");
 
    // An atomic updater for supporting public interface methods that provide concrete subclasses an interface driven
    // memory barrier without resorting to heavier mutual exclusion locks.  The tradeoff is that it is developer's
@@ -65,13 +65,13 @@ implements IReusableObjectInternal<I>, IReusable, Recyclable
 	// private static AtomicIntegerFieldUpdater<AbstractReusableObject> ATOMIC_SYNC_BIT_UPDATE =
 	// AtomicIntegerFieldUpdater.newUpdater(AbstractReusableObject.class, "syncBit");
 
-   private final OnReturnCallback releaseCallback;
+	// private final OnReturnCallback releaseCallback;
    private final int poolIndex;
    private final long inception;
 
    // Reference counter used by public IReusable interface methods to identify the moment it is safe for an instance
    // to recycle itself back to its original object pool.
-	private final AtomicInteger refCnt = new AtomicInteger(0);
+	private volatile int refCnt = 0;
 
    // volatile bit solely for the purpose of ensuring memory visibility.  Reference count is not always changed and
    // read along a pattern that is sufficient to support required memory barrier semantics, but it is possible to
@@ -95,9 +95,9 @@ implements IReusableObjectInternal<I>, IReusable, Recyclable
    protected AbstractReusableObject( final OnReturnCallback releaseCallback, final int poolIndex )
    {
       super();
-      this.releaseCallback = releaseCallback;
+		// this.releaseCallback = releaseCallback;
+		this.poolIndex = poolIndex;
       this.inception = System.nanoTime();
-      this.poolIndex = poolIndex;
    }
 
 
@@ -133,9 +133,9 @@ implements IReusableObjectInternal<I>, IReusable, Recyclable
    @Override
 	public final int reserve(int incr)
    {
-		boolean updated = this.refCnt.compareAndSet(0, incr);
-		while ((updated == false) && (this.refCnt.get() == 0)) {
-			updated = this.refCnt.compareAndSet(0, incr);
+		boolean updated = ATOMIC_REF_COUNT_UPDATE.compareAndSet(this, 0, incr);
+		while ((updated == false) && (ATOMIC_REF_COUNT_UPDATE.get(this) == 0)) {
+			updated = ATOMIC_REF_COUNT_UPDATE.compareAndSet(this, 0, incr);
       }
 
       Verify.verify(
@@ -160,7 +160,7 @@ implements IReusableObjectInternal<I>, IReusable, Recyclable
    @Override
    public final int getReferenceCount()
    {
-		return this.refCnt.get();
+		return ATOMIC_REF_COUNT_UPDATE.get(this);
    }
 
 
@@ -182,8 +182,8 @@ implements IReusableObjectInternal<I>, IReusable, Recyclable
 		// the time the value will be 1, and so risking a potential extra failed write pays off.
 		int origRefCnt = 1;
 		int newRefCnt = incr + 1;
-		while ((origRefCnt > 0) && this.refCnt.compareAndSet(origRefCnt, newRefCnt)) {
-			origRefCnt = this.refCnt.get();
+		while ((origRefCnt > 0) && ATOMIC_REF_COUNT_UPDATE.compareAndSet(this, origRefCnt, newRefCnt)) {
+			origRefCnt = ATOMIC_REF_COUNT_UPDATE.get(this);
          newRefCnt = origRefCnt + incr;
 			Preconditions
 				.checkState(newRefCnt > origRefCnt, "Reference counts may not overflow an integer");
@@ -211,8 +211,10 @@ implements IReusableObjectInternal<I>, IReusable, Recyclable
 
 		int origRefCnt = decr;
 		int newRefCnt = 0;
-		while ((origRefCnt >= decr) && (!this.refCnt.compareAndSet(origRefCnt, newRefCnt))) {
-			origRefCnt = this.refCnt.get();
+		while ((origRefCnt >= decr) &&
+			(!ATOMIC_REF_COUNT_UPDATE.compareAndSet(this, origRefCnt, newRefCnt)))
+		{
+			origRefCnt = ATOMIC_REF_COUNT_UPDATE.get(this);
 			newRefCnt = origRefCnt - decr;
          Preconditions.checkState(newRefCnt < origRefCnt, "Reference counts may not overflow to an increased value");
       }
@@ -227,7 +229,7 @@ implements IReusableObjectInternal<I>, IReusable, Recyclable
 			// required.
 			this.recycle();
 			this.syncBit = 1;
-			this.releaseCallback.accept(this);
+			// this.releaseCallback.accept(this);
       }
    }
 

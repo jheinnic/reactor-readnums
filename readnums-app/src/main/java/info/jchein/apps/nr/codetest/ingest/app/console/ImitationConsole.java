@@ -24,13 +24,14 @@ class ImitationConsole implements IConsole
       return new ImitationConsole();
    }
 
-   /**
-    * Retrieves the unique {@link java.io.PrintWriter PrintWriter} object
-    * associated with this console.
-    *
-    * @return  The printwriter associated with this console
-    */
-    public PrintWriter writer() {
+   
+	/**
+	 * Retrieves the unique {@link java.io.PrintWriter PrintWriter} object associated with this console.
+	 *
+	 * @return The print writer associated with this console
+	 */
+    @Override
+	public PrintWriter writer() {
         return pw;
     }
 
@@ -65,7 +66,8 @@ class ImitationConsole implements IConsole
     *
     * @return  The reader associated with this console
     */
-    public Reader reader() {
+    @Override
+	public Reader reader() {
         return reader;
     }
 
@@ -99,7 +101,8 @@ class ImitationConsole implements IConsole
     *
     * @return  This console
     */
-    public ImitationConsole format(String fmt, Object ...args) {
+    @Override
+	public ImitationConsole format(String fmt, Object ...args) {
         formatter.format(fmt, args).flush();
         return this;
     }
@@ -138,7 +141,8 @@ class ImitationConsole implements IConsole
     *
     * @return  This console
     */
-    public ImitationConsole printf(String format, Object ... args) {
+    @Override
+	public ImitationConsole printf(String format, Object ... args) {
         return format(format, args);
     }
 
@@ -173,7 +177,8 @@ class ImitationConsole implements IConsole
     *          including any line-termination characters, or <tt>null</tt>
     *          if an end of stream has been reached.
     */
-    public String readLine(String fmt, Object ... args) {
+    @Override
+	public String readLine(String fmt, Object ... args) {
         String line = null;
         synchronized (writeLock) {
             synchronized(readLock) {
@@ -201,7 +206,8 @@ class ImitationConsole implements IConsole
     *          including any line-termination characters, or <tt>null</tt>
     *          if an end of stream has been reached.
     */
-    public String readLine() {
+    @Override
+	public String readLine() {
         return readLine("");
     }
 
@@ -237,7 +243,8 @@ class ImitationConsole implements IConsole
     *          from the console, not including any line-termination characters,
     *          or <tt>null</tt> if an end of stream has been reached.
     */
-    public char[] readPassword(String fmt, Object ... args) {
+    @Override
+	public char[] readPassword(String fmt, Object ... args) {
         char[] passwd = null;
         synchronized (writeLock) {
             synchronized(readLock) {
@@ -281,7 +288,8 @@ class ImitationConsole implements IConsole
     *          from the console, not including any line-termination characters,
     *          or <tt>null</tt> if an end of stream has been reached.
     */
-    public char[] readPassword() {
+    @Override
+	public char[] readPassword() {
         return readPassword("");
     }
 
@@ -289,18 +297,20 @@ class ImitationConsole implements IConsole
      * Flushes the console and forces any buffered output to be written
      * immediately .
      */
-    public void flush() {
+    @Override
+	public void flush() {
         pw.flush();
     }
 
-    private Object readLock;
-    private Object writeLock;
+
+	Object readLock;
+	Object writeLock;
     private Reader reader;
     private Writer out;
     private PrintWriter pw;
     private Formatter formatter;
     private Charset cs;
-    private char[] rcb;
+	char[] rcb;
     // private static native String encoding();
     // private static native boolean echo(boolean on) throws IOException;
     // private static boolean echoOff;
@@ -326,7 +336,8 @@ class ImitationConsole implements IConsole
         return b;
     }
 
-    private char[] grow() {
+	char[] grow()
+	{
         assert Thread.holdsLock(readLock);
         char[] t = new char[rcb.length * 2];
         System.arraycopy(rcb, 0, t, 0, rcb.length);
@@ -345,15 +356,26 @@ class ImitationConsole implements IConsole
             nextChar = nChars = 0;
             leftoverLF = false;
         }
-        public void close () {}
-        public boolean ready() throws IOException {
-            //in.ready synchronizes on readLock already
-            return in.ready();
-        }
 
-        public int read(char cbuf[], int offset, int length)
-            throws IOException
-        {
+
+		@Override
+		public void close()
+		{
+			// No Operation
+		}
+
+
+		@Override
+		public boolean ready() throws IOException
+		{
+			// in.ready synchronizes on readLock already
+			return in.ready();
+		}
+
+
+		@Override
+		public int read(char cbuf[], int offset, int length) throws IOException
+		{
             int off = offset;
             int end = offset + length;
             if (offset < 0 || offset > cbuf.length || length < 0 ||
@@ -446,27 +468,32 @@ class ImitationConsole implements IConsole
         }
     }
 
-    ImitationConsole() {
-        readLock = new Object();
-        writeLock = new Object();
-//        String csname = encoding();
-//        if (csname != null) {
-//            try {
-//                cs = Charset.forName(csname);
-//            } catch (Exception x) {}
-//        }
-//        if (cs == null)
-            cs = Charset.defaultCharset();
-        out = StreamEncoder.forOutputStreamWriter(
-                  new FileOutputStream(FileDescriptor.out),
-                  writeLock,
-                  cs);
-        pw = new PrintWriter(out, true) { public void close() {} };
-        formatter = new Formatter(out);
-        reader = new LineReader(StreamDecoder.forInputStreamReader(
-                     new FileInputStream(FileDescriptor.in),
-                     readLock,
-                     cs));
-        rcb = new char[1024];
-    }
+
+	ImitationConsole()
+	{
+		readLock = new Object();
+		writeLock = new Object();
+		// String csname = encoding();
+		// if (csname != null) {
+		// try {
+		// cs = Charset.forName(csname);
+		// } catch (Exception x) {}
+		// }
+		// if (cs == null)
+		cs = Charset.defaultCharset();
+		out =
+			StreamEncoder.forOutputStreamWriter(new FileOutputStream(FileDescriptor.out), writeLock, cs);
+		pw = new PrintWriter(out, true) {
+			@Override
+			public void close()
+			{
+				// No Operation
+			}
+		};
+		formatter = new Formatter(out);
+		reader =
+			new LineReader(
+				StreamDecoder.forInputStreamReader(new FileInputStream(FileDescriptor.in), readLock, cs));
+		rcb = new char[1024];
+	}
 }

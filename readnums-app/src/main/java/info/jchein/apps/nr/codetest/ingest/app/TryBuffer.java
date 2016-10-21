@@ -14,13 +14,14 @@ import org.reactivestreams.Processor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import info.jchein.apps.nr.codetest.ingest.messages.CounterIncrementsAllocator;
+import info.jchein.apps.nr.codetest.ingest.messages.CounterIncrements;
 import info.jchein.apps.nr.codetest.ingest.messages.ICounterIncrements;
 import info.jchein.apps.nr.codetest.ingest.messages.IInputMessage;
 import info.jchein.apps.nr.codetest.ingest.messages.IWriteFileBuffer;
-import info.jchein.apps.nr.codetest.ingest.messages.InputMessageAllocator;
-import info.jchein.apps.nr.codetest.ingest.messages.WriteFileBufferAllocator;
+import info.jchein.apps.nr.codetest.ingest.messages.InputMessage;
+import info.jchein.apps.nr.codetest.ingest.messages.WriteFileBuffer;
 import info.jchein.apps.nr.codetest.ingest.reusable.IReusableAllocator;
+import info.jchein.apps.nr.codetest.ingest.reusable.ReusableObjectAllocator;
 import info.jchein.apps.nr.codetest.ingest.segments.logunique.FailedWriteException;
 import info.jchein.apps.nr.codetest.ingest.segments.logunique.IUniqueMessageTrie;
 import info.jchein.apps.nr.codetest.ingest.segments.logunique.UniqueMessageTrie;
@@ -65,14 +66,14 @@ public class TryBuffer
             err.printStackTrace();
          });
 
-      final InputMessageAllocator msgAlloc =
-         new InputMessageAllocator(2097152, false);
+      final ReusableObjectAllocator<IInputMessage, InputMessage> msgAlloc =
+			new ReusableObjectAllocator<>(2048, null);
 
-      final WriteFileBufferAllocator writeBufAlloc =
-         new WriteFileBufferAllocator(4096, false, 3072);
+		final ReusableObjectAllocator<IWriteFileBuffer, WriteFileBuffer> writeBufAlloc =
+			new ReusableObjectAllocator<>(4096, null);
 
-      final CounterIncrementsAllocator counterAlloc =
-         new CounterIncrementsAllocator(2048, false);
+		final ReusableObjectAllocator<ICounterIncrements, CounterIncrements> counterAlloc =
+			new ReusableObjectAllocator<>(2048, null);
 
       final Codec<Buffer, IInputMessage, IInputMessage> msgCodec =
 			new DelimitedCodec<>(
@@ -83,8 +84,7 @@ public class TryBuffer
          IInputMessage> tcpServer(
             NettyTcpServer.class,
             aSpec -> {
-               return aSpec
-               .env(
+               return aSpec.env(
                   Environment.initializeIfEmpty())
                .codec(msgCodec)
                .dispatcher(Environment.newDispatcher("serverDispatcher", 8192, 1))
@@ -192,9 +192,8 @@ public class TryBuffer
                return true;
             });
 
-         final Control statsReport =
-            writeResultStream
-            .process(counterIncrementsProcessor)
+         	// TODO: This is outdated logic.  See production impl for a better code path.
+            writeResultStream.process(counterIncrementsProcessor)
             .mergeWith(Streams.period(counterTimer, 1)
                .map(evt -> counterAlloc.allocate()
                   .setDeltas(0, 0)))
