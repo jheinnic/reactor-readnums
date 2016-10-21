@@ -74,7 +74,7 @@ public class ParametersConfiguration
     | Input Segment Parameters |
     +==========================*/
 
-	@Value("16")
+	@Value("32")
    public int fanOutRingBufferSize;
 
    @Value("4")
@@ -137,7 +137,7 @@ public class ParametersConfiguration
 	@Value("128")
    public int reportTimerWheelSize;
 
-	@Value("2000")
+	@Value("1250")
    public int reportTimerResolutionMillis;
 
    @Value("SLEEP")
@@ -146,6 +146,6 @@ public class ParametersConfiguration
    @Value("10")
    public int reportIntervalSeconds;
 
-	@Value("16")
+	@Value("32")
    public int perfCounterRingBufferSize;
 }

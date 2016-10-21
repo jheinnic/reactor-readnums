@@ -91,10 +91,10 @@ implements IStatsProviderSupplier
 				"Only one concurrent file writer is supported for now");
 		} else {
 			reportCounterIncrementsStream = batchInputSegment.getLoadedWriteFileBufferStream()
-				.capacity(this.concurrentFileWriters)
+				// .capacity(this.concurrentFileWriters)
 				.process(this.writeOutputFileProcessor)
-				.log("From file writer")
 				.map(writeBuffer -> processBatch(writeBuffer));
+			// .log("after write");
 		}
 
 		return evt -> Boolean.TRUE;

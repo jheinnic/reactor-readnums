@@ -35,7 +35,7 @@ import reactor.Environment;
 import reactor.bus.EventBus;
 import reactor.core.Dispatcher;
 import reactor.core.config.DispatcherType;
-import reactor.core.dispatch.WorkQueueDispatcher;
+import reactor.core.dispatch.wait.AgileWaitingStrategy;
 import reactor.core.processor.RingBufferProcessor;
 import reactor.core.support.NamedDaemonThreadFactory;
 import reactor.fn.Consumer;
@@ -44,8 +44,6 @@ import reactor.fn.timer.Timer;
 import reactor.io.buffer.Buffer;
 import reactor.io.codec.Codec;
 import reactor.io.codec.DelimitedCodec;
-import reactor.jarjar.com.lmax.disruptor.LiteBlockingWaitStrategy;
-import reactor.jarjar.com.lmax.disruptor.dsl.ProducerType;
 import reactor.rx.Stream;
 import reactor.rx.broadcast.Broadcaster;
 
@@ -156,11 +154,11 @@ public class IngestConfiguration
     +========================*/
 
 	@Bean
-	@Scope("singleton")
-	LiteBlockingWaitStrategy liteDispatchWaitStrategy()
+	@Scope("prototype")
+	AgileWaitingStrategy liteDispatchWaitStrategy()
 	{
-		// return new AgileWaitingStrategy();
-		return new LiteBlockingWaitStrategy();
+		return new AgileWaitingStrategy();
+		// return new LiteBlockingWaitStrategy();
 	}
 
    @Bean
@@ -169,7 +167,8 @@ public class IngestConfiguration
    {
 		return Environment.newDispatcher(
 			"handoffDispatcher",
-			RingBufferUtils.nextSmallestPowerOf2(paramsConfig.fanOutRingBufferSize), 1,
+			RingBufferUtils.nextSmallestPowerOf2(paramsConfig.fanOutRingBufferSize),
+			paramsConfig.dataPartitionCount,
 			DispatcherType.RING_BUFFER);
 	}
 
@@ -269,19 +268,19 @@ public class IngestConfiguration
    }
 
 
-	@Bean
-	@Scope("singleton")
-	Dispatcher rawInputDispatcher()
-	{
-		Dispatcher retVal =
-			new WorkQueueDispatcher(
-				"rawInputDispatcher", 5,
-				RingBufferUtils.nextSmallestPowerOf2(paramsConfig.fanOutRingBufferSize),
-				err -> LOG.error("Error", err), ProducerType.SINGLE, liteDispatchWaitStrategy());
-
-		Environment.dispatcher("rawInputDispatcher", retVal);
-		return retVal;
-   }
+	// @Bean
+	// @Scope("singleton")
+	// Dispatcher rawInputDispatcher()
+	// {
+	// Dispatcher retVal =
+	// new WorkQueueDispatcher(
+	// "rawInputDispatcher", 5,
+	// RingBufferUtils.nextSmallestPowerOf2(paramsConfig.fanOutRingBufferSize),
+	// err -> LOG.error("Error", err), ProducerType.MULTI, liteDispatchWaitStrategy());
+	//
+	// Environment.dispatcher("rawInputDispatcher", retVal);
+	// return retVal;
+	// }
 
 
    @Bean
@@ -296,7 +295,7 @@ public class IngestConfiguration
          fanOutDispatchers[ii] =
 				Environment.newDispatcher(
 					"fanOutDispatcher-" + ii,
-					RingBufferUtils.nextSmallestPowerOf2(paramsConfig.fanOutRingBufferSize), 1,
+					RingBufferUtils.nextSmallestPowerOf2(paramsConfig.fanOutRingBufferSize), 4,
 					DispatcherType.RING_BUFFER);
 			// new RingBufferDispatcher(
 			// err -> LOG.error("Error", err), ProducerType.MULTI, liteDispatchWaitStrategy());
@@ -332,7 +331,6 @@ public class IngestConfiguration
          uniqueMessageTrie(),
          streamsToMerge(),
 			eventsConfig.writeFileBufferAllocator(),
-			rawInputDispatcher(),
 			handoffDispatcher(),
 			fanOutBroadcasters());
    }
@@ -407,15 +405,15 @@ public class IngestConfiguration
    {
 		final byte numConcurrentWriters = paramsConfig.numConcurrentWriters;
 		if (numConcurrentWriters == 1) {
-			return RingBufferProcessor.<ICounterIncrements> create(
-				"perfCounterRingBuffer",
+			return RingBufferProcessor.<ICounterIncrements> share(
+				"statsProcessor",
 				RingBufferUtils.nextSmallestPowerOf2(paramsConfig.perfCounterRingBufferSize),
-				liteDispatchWaitStrategy());
+				new AgileWaitingStrategy());
 		} else {
 			return RingBufferProcessor.<ICounterIncrements> share(
-				"perfCounterRingBuffer",
+				"statsProcessor",
 				RingBufferUtils.nextSmallestPowerOf2(paramsConfig.perfCounterRingBufferSize),
-				liteDispatchWaitStrategy());
+				new AgileWaitingStrategy());
 		}
    }
 
@@ -443,9 +441,8 @@ public class IngestConfiguration
          "reportingTimer",
          paramsConfig.reportTimerResolutionMillis,
          RingBufferUtils.nextSmallestPowerOf2(paramsConfig.reportTimerWheelSize),
-         paramsConfig.reportTimerWaitKind.get(),
-         Executors.newFixedThreadPool(1, new NamedDaemonThreadFactory(
-            "reporting-timer-run")));
+			paramsConfig.reportTimerWaitKind.get(),
+			Executors.newFixedThreadPool(1, new NamedDaemonThreadFactory("reportingTimer")));
    }
 
 

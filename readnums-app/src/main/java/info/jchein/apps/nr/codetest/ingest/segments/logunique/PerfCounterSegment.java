@@ -98,12 +98,12 @@ extends AbstractSegment
       final boolean[] seenOnComplete = {false, false};
       final Condition completed = shutdownLock.newCondition();
 
-
 		writeOutputFileSegment.getReportCounterIncrementsStream()
+			// .mergeWith(Streams.period(reportTimer, reportIntervalInSeconds)
+			// .map(evt -> counterIncrementsAllocator.allocate()
+			// .setDeltas(0, 0))
+			// .log("pulse"))
 			.process(counterIncrementsProcessor)
-			.mergeWith(Streams.period(reportTimer, reportIntervalInSeconds)
-				.map(evt -> counterIncrementsAllocator.allocate()
-					.setDeltas(0, 0)))
 			.observeCancel(evt -> {
 				// Toggle the first seenOnComplete flag once input to the final window is recognized by
 				// observing a SHUTDOWN event being fed to the window boundary. Note that we are taking
@@ -119,48 +119,52 @@ extends AbstractSegment
 					shutdownLock.unlock();
 				}
 			})
-			// .observe(evt -> evt.beforeRead())
 			.window(reportIntervalInSeconds, TimeUnit.SECONDS, reportTimer)
-			.flatMap(statStream -> {
-				return statStream.reduce(
-					counterIncrementsAllocator.allocate(),
-					(final ICounterIncrements prevStat, final ICounterIncrements nextStat) -> {
+			.consume(statStream -> {
+				statStream.startWith(
+					Streams.just(
+						counterIncrementsAllocator.allocate()
+							.setDeltas(0, 0))
+				).reduce(
+						counterIncrementsAllocator.allocate(),
+						(final ICounterIncrements prevStat, final ICounterIncrements nextStat) -> {
+					nextStat.beforeRead();
 					prevStat.incrementDeltas(nextStat);
 					nextStat.release();
 					return prevStat;
+				})
+					.consume(deltaSum -> {
+					// First argument to format aggregates the total unique counter and returns the duration
+					// since the last update. Remaining arguments are simple getters. If this is later
+					// rearranged, understand that initial call to incrementUniqueValues() establishes time
+					// duration for subsequent call to getTotalDuration() as well as total unique counter for
+					// subsequent call to getTotalUniques(). Call to incrementUniqueValues() must therefore
+					// precede either call to other two methods called out in this comment.
+					String preSummary =
+						String.format(
+							"During the last %d seconds, %d unique 9-digit inputs were logged and %d redundant inputs were discarded.\nSince service launch (%d seconds), %d unique 9-digit inputs have been logged.\n\n",
+							Long.valueOf(
+								TimeUnit.NANOSECONDS.toSeconds(
+									cumulativeValues.incrementUniqueValues(deltaSum.getDeltaUniques()))),
+							Integer.valueOf(deltaSum.getDeltaUniques()),
+							Integer.valueOf(deltaSum.getDeltaDuplicates()),
+							Long.valueOf(TimeUnit.NANOSECONDS.toSeconds(cumulativeValues.getTotalDuration())),
+							Integer.valueOf(cumulativeValues.getTotalUniques()));
+					deltaSum.release();
+
+					final StringBuilder strBldr = new StringBuilder().append(preSummary);
+					for (final IStatsProvider statsProvider : bufferStatProviders) {
+						strBldr.append("Buffer usage for ")
+							.append(statsProvider.getName())
+							.append(" reported as ")
+							.append(statsProvider.getFreeBufferSlots())
+							.append(" slots available out of a total of ")
+							.append(statsProvider.getTotalBufferCapacity())
+							.append(" allocated.\n");
+					}
+
+					LOG.info(strBldr.toString());
 				});
-			})
-			.consume(deltaSum -> {
-				// First argument to format aggregates the total unique counter and returns the duration
-				// since the last update. Remaining arguments are simple getters. If this is later
-				// rearranged, understand that initial call to incrementUniqueValues() establishes time
-				// duration for subsequent call to getTotalDuration() as well as total unique counter for
-				// subsequent call to getTotalUniques(). Call to incrementUniqueValues() must therefore
-				// precede either call to other two methods called out in this comment.
-				LOG.info(
-					String.format(
-						"\nDuring the last %d seconds, %d unique 9-digit inputs were logged and %d redundant inputs were discarded.\nSince service launch (%d seconds), %d unique 9-digit inputs have been logged.\n",
-						Long.valueOf(
-							TimeUnit.NANOSECONDS
-								.toSeconds(cumulativeValues.incrementUniqueValues(deltaSum.getDeltaUniques()))),
-						Integer.valueOf(deltaSum.getDeltaUniques()),
-						Integer.valueOf(deltaSum.getDeltaDuplicates()),
-						Long.valueOf(TimeUnit.NANOSECONDS.toSeconds(cumulativeValues.getTotalDuration())),
-						Integer.valueOf(cumulativeValues.getTotalUniques())));
-				deltaSum.release();
-
-				final StringBuilder strBldr = new StringBuilder().append("\n");
-				for (final IStatsProvider statsProvider : bufferStatProviders) {
-					strBldr.append("Buffer usage for ")
-						.append(statsProvider.getName())
-						.append(" reported as ")
-						.append(statsProvider.getFreeBufferSlots())
-						.append(" slots available out of a total of ")
-						.append(statsProvider.getTotalBufferCapacity())
-						.append(" allocated.\n");
-				}
-
-				LOG.info(strBldr.toString());
 			});
 
 		LOG.info("Data collection is online");

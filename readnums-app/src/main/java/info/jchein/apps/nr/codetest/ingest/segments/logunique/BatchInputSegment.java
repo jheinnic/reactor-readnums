@@ -4,9 +4,6 @@ package info.jchein.apps.nr.codetest.ingest.segments.logunique;
 import java.util.ArrayList;
 import java.util.concurrent.TimeUnit;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import info.jchein.apps.nr.codetest.ingest.lifecycle.AbstractSegment;
 import info.jchein.apps.nr.codetest.ingest.messages.IInputMessage;
 import info.jchein.apps.nr.codetest.ingest.messages.IWriteFileBuffer;
@@ -28,7 +25,7 @@ public class BatchInputSegment
 extends AbstractSegment
 implements IStatsProviderSupplier
 {
-	private static final Logger LOG = LoggerFactory.getLogger(BatchInputSegment.class);
+	// private static final Logger LOG = LoggerFactory.getLogger(BatchInputSegment.class);
 
 	private final short ioCount;
 	private final long ioPeriod;
@@ -38,7 +35,6 @@ implements IStatsProviderSupplier
 
 	private final Timer ingestionTimer;
 	private final Dispatcher handoffDispatcher;
-	private final Dispatcher rawInputDispatcher;
 
 	private final Broadcaster<Stream<IInputMessage>> streamsToMerge;
 	private final ArrayList<Broadcaster<IInputMessage>> fanOutBroadcasters;
@@ -54,7 +50,6 @@ implements IStatsProviderSupplier
 		final IUniqueMessageTrie uniqueTest,
 		final Broadcaster<Stream<IInputMessage>> streamsToMerge,
 		final IReusableAllocator<IWriteFileBuffer> writeFileBufferAllocator,
-		final Dispatcher rawInputDispatcher,
 		final Dispatcher handoffDispatcher,
 		final ArrayList<Broadcaster<IInputMessage>> fanOutBroadcasters )
 	{
@@ -67,7 +62,6 @@ implements IStatsProviderSupplier
 		this.streamsToMerge = streamsToMerge;
 		this.numDataPartitions = numDataPartitions;
 		this.fanOutBroadcasters = fanOutBroadcasters;
-		this.rawInputDispatcher = rawInputDispatcher;
 		this.handoffDispatcher = handoffDispatcher;
 		this.writeFileBufferAllocator = writeFileBufferAllocator;
 
@@ -107,8 +101,7 @@ implements IStatsProviderSupplier
 			final int partitionIndex = ii;
 			final Broadcaster<IInputMessage> nextBcast = this.fanOutBroadcasters.get(ii);
 			
-			streamTerminals.add(nextBcast.log("on broadcast")
-				.filter(inputMsg -> {
+			streamTerminals.add(nextBcast.filter(inputMsg -> {
 				inputMsg.beforeRead();
 				if (this.uniqueTest.isUnique(inputMsg.getPrefix(), inputMsg.getSuffix())) {
 					return true;
@@ -118,7 +111,6 @@ implements IStatsProviderSupplier
 				}
 			})
 				.buffer(this.ioCount, this.ioPeriod, this.ioTimeUnit, this.ingestionTimer)
-				.log("Buffer2")
 				.map(messageList -> {
 					IWriteFileBuffer retVal = this.writeFileBufferAllocator.allocate();
 					for (IInputMessage nextMsg : messageList) {
@@ -129,28 +121,25 @@ implements IStatsProviderSupplier
 
 					retVal.afterWrite();
 					return retVal;
-				})
-				.log("for writer"));
+				}));
 		}
 
 		this.streamsToMerge.<IInputMessage> merge()
-			.capacity(this.ioCount)
+			// .capacity(this.ioCount)
 			.window(this.ioCount, this.ioPeriod, this.ioTimeUnit, this.ingestionTimer)
-			.log("Window")
-			.consumeOn(this.rawInputDispatcher, batchedStream -> {
+			.consumeOn(this.handoffDispatcher, batchedStream -> {
 				batchedStream.groupBy(
 					inputMsg -> Integer.valueOf(inputMsg.getPartitionIndex())
-				).consumeOn(this.rawInputDispatcher, groupedStream -> {
+				).consumeOn(this.handoffDispatcher, groupedStream -> {
 					final Broadcaster<IInputMessage> groupBroadcaster = 
 						this.fanOutBroadcasters.get(groupedStream.key());
-					groupedStream.consume(inputMsg -> {
+					groupedStream.consumeOn(this.handoffDispatcher, inputMsg -> {
 						groupBroadcaster.onNext(inputMsg);
 					});
 				});
 			});
 
-		this.loadedWriteFileBufferStream = Streams.merge(streamTerminals)
-			.log("Transformed and merged");
+		this.loadedWriteFileBufferStream = Streams.merge(streamTerminals);
 
 		return evt -> Boolean.TRUE;
 	}
@@ -176,9 +165,6 @@ implements IStatsProviderSupplier
 		retVal.add(
 			new ResourceStatsAdapter(
 				"Handoff RingBufferProcessor", this.handoffDispatcher));
-		retVal.add(
-			new ResourceStatsAdapter(
-				"Raw Input RingBufferProcessor", this.rawInputDispatcher));
 
 		return retVal;
 	}
