@@ -22,10 +22,8 @@ import info.jchein.apps.nr.codetest.ingest.perfdata.ResourceStatsAdapter;
 import info.jchein.apps.nr.codetest.ingest.reusable.IReusableAllocator;
 import reactor.bus.Event;
 import reactor.bus.EventBus;
-import reactor.core.Dispatcher;
 import reactor.fn.Function;
 import reactor.rx.Stream;
-import reactor.rx.Streams;
 
 
 /**
@@ -43,26 +41,23 @@ implements IStatsProviderSupplier
 	private final File outputLogFile;
 	private final short concurrentFileWriters;
 	private final BatchInputSegment batchInputSegment;
-	private final Dispatcher writeOutputFileDispatcher;
-	private final Processor<IWriteFileBuffer, IWriteFileBuffer> writeOutputFileWorkProcessor;
+	private final Processor<IWriteFileBuffer, IWriteFileBuffer> writeOutputFileProcessor;
 	private final IReusableAllocator<ICounterIncrements> counterIncrementsAllocator;
 
 	private FileOutputStream outputFileStream;
-	private Stream<Stream<ICounterIncrements>> reportCounterIncrementsStream;
+	private Stream<ICounterIncrements> reportCounterIncrementsStream;
 
 
 	public WriteOutputFileSegment( final String outputFilePath, final short concurrentFileWriters,
 		final EventBus eventBus, final BatchInputSegment batchInputSegment,
-		final Dispatcher writeOutputFileDispatcher,
-		final Processor<IWriteFileBuffer, IWriteFileBuffer> writeOutputFileWorkProcessor,
+		final Processor<IWriteFileBuffer, IWriteFileBuffer> writeOutputFileProcessor,
 		final IReusableAllocator<ICounterIncrements> counterIncrementsAllocator )
 	{
 		super(eventBus);
 		this.concurrentFileWriters = concurrentFileWriters;
 		this.outputLogFile = new File(outputFilePath);
 		this.batchInputSegment = batchInputSegment;
-		this.writeOutputFileDispatcher = writeOutputFileDispatcher;
-		this.writeOutputFileWorkProcessor = writeOutputFileWorkProcessor;
+		this.writeOutputFileProcessor = writeOutputFileProcessor;
 		this.counterIncrementsAllocator = counterIncrementsAllocator;
 	}
 
@@ -82,28 +77,31 @@ implements IStatsProviderSupplier
 		LOG.info("Output file is available for writing");
 
 		if (concurrentFileWriters > 1) {
-			final ArrayList<Stream<ICounterIncrements>> partitions =
-				new ArrayList<>(concurrentFileWriters);
-
-			for (byte ii = 0; ii < concurrentFileWriters; ii++) {
-				final Stream<IWriteFileBuffer> partitionedStreamRoot =
-					batchInputSegment.getLoadedWriteFileBufferStream()
-						.process(writeOutputFileWorkProcessor);
-				partitions.add(partitionedStreamRoot.map(writeBuffer -> processBatch(writeBuffer)));
-			}
-			reportCounterIncrementsStream = Streams.from(partitions);
+			// final Stream<IWriteFileBuffer> partitionedStreamRoot =
+			// batchInputSegment.getLoadedWriteFileBufferStream()
+			// .process(writeOutputFileWorkProcessor);
+			//
+			// final ArrayList<Stream<ICounterIncrements>> partitions =
+			// new ArrayList<>(concurrentFileWriters);
+			// for (byte ii = 0; ii < concurrentFileWriters; ii++) {
+			// partitions.add(partitionedStreamRoot.map(writeBuffer -> processBatch(writeBuffer)));
+			// }
+			// reportCounterIncrementsStream = Streams.from(partitions);
+			throw new UnsupportedOperationException(
+				"Only one concurrent file writer is supported for now");
 		} else {
 			reportCounterIncrementsStream = batchInputSegment.getLoadedWriteFileBufferStream()
-				.process(writeOutputFileWorkProcessor)
-				.map(writeBuffer -> processBatch(writeBuffer))
-				.nest();
+				.capacity(this.concurrentFileWriters)
+				.process(this.writeOutputFileProcessor)
+				.log("From file writer")
+				.map(writeBuffer -> processBatch(writeBuffer));
 		}
 
 		return evt -> Boolean.TRUE;
 	}
 
 
-	public Stream<Stream<ICounterIncrements>> getReportCounterIncrementsStream()
+	public Stream<ICounterIncrements> getReportCounterIncrementsStream()
 	{
 		return reportCounterIncrementsStream;
 	}
@@ -206,7 +204,7 @@ implements IStatsProviderSupplier
 		final ArrayList<IStatsProvider> retVal = new ArrayList<>(1);
 		retVal.add(
 			new ResourceStatsAdapter(
-				"Output File Writers' RingBufferWorkProcessor", writeOutputFileWorkProcessor));
+				"Output File Writers' RingBufferProcessor", this.writeOutputFileProcessor));
 		return retVal;
 	}
 }

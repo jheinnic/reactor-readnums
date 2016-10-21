@@ -18,7 +18,6 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import org.springframework.stereotype.Component;
 
-import info.jchein.apps.nr.codetest.ingest.config.Constants;
 import info.jchein.apps.nr.codetest.ingest.reusable.OnReturnCallback;
 import info.jchein.apps.nr.codetest.ingest.reusable.ReusableObjectAllocator;
 
@@ -45,7 +44,8 @@ extends ReusableObjectAllocator<IWriteFileBuffer, WriteFileBuffer>
    private static final int DEFAULT_INITIAL_POOL_SIZE = 64;
    private static final boolean DEFAULT_POOL_SIZE_FIXED = false;
 
-   public static int BUFFER_SIZE_IN_MESSAGES = Constants.DEFAULT_MAX_MESSAGES_PER_FLUSH;
+
+	// public static int BUFFER_SIZE_IN_MESSAGES = Constants.DEFAULT_MAX_MESSAGES_PER_FLUSH;
 
    public WriteFileBufferAllocator( final int bufferSizeInMessages )
    {

@@ -15,7 +15,7 @@ public interface IInputMessage extends IReusable
    }
 
 
-   public void setMessagePayload(byte[] msgBytes, int prefix, short suffix, byte dataPartitionCount);
+	public IInputMessage setMessagePayload(byte[] msgBytes, short suffix, byte partitionIndex);
 
 
 	/**
@@ -33,13 +33,13 @@ public interface IInputMessage extends IReusable
    public byte[] getMessageBytes();
 
 
-   public int getMessage();
+	// public int getMessage();
 
 
    public int getPrefix();
 
 
-   public short getSuffix();
+	public short getSuffix();
 
 
    public byte getPartitionIndex();

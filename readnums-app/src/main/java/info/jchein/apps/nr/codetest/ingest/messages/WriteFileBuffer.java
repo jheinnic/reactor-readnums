@@ -35,6 +35,16 @@ implements IWriteFileBuffer
 	}
 
 
+	private static final String TYPE_DISPLAY_NAME = WriteFileBuffer.class.getSimpleName();
+
+
+	@Override
+	protected String getTypeName()
+	{
+		return TYPE_DISPLAY_NAME;
+	}
+
+
 	@Override
 	public final IWriteFileBuffer castToInterface()
 	{

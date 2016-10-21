@@ -25,11 +25,6 @@ import reactor.fn.timer.Timer;
 import reactor.rx.Streams;
 
 
-
-
-
-
-
 public class PerfCounterSegment
 extends AbstractSegment
 {
@@ -46,12 +41,10 @@ extends AbstractSegment
    private final Timer reportTimer;
    private final WriteOutputFileSegment writeOutputFileSegment;
    private final Processor<ICounterIncrements,ICounterIncrements> counterIncrementsProcessor;
+	private final IReusableAllocator<ICounterIncrements> counterIncrementsAllocator;
 
 	private final CounterOverall cumulativeValues = new CounterOverall();
    private final ArrayList<IStatsProvider> bufferStatProviders = new ArrayList<>();
-
-
-	private final IReusableAllocator<ICounterIncrements> counterIncrementsAllocator;
 
    public PerfCounterSegment(
       final long updateResolutionInSeconds,
@@ -105,10 +98,8 @@ extends AbstractSegment
       final boolean[] seenOnComplete = {false, false};
       final Condition completed = shutdownLock.newCondition();
 
-      writeOutputFileSegment.getReportCounterIncrementsStream()
-			.<ICounterIncrements> flatMap(nestedStream -> {
-				return nestedStream;
-			})
+
+		writeOutputFileSegment.getReportCounterIncrementsStream()
 			.process(counterIncrementsProcessor)
 			.mergeWith(Streams.period(reportTimer, reportIntervalInSeconds)
 				.map(evt -> counterIncrementsAllocator.allocate()
@@ -137,7 +128,7 @@ extends AbstractSegment
 					prevStat.incrementDeltas(nextStat);
 					nextStat.release();
 					return prevStat;
-         });
+				});
 			})
 			.consume(deltaSum -> {
 				// First argument to format aggregates the total unique counter and returns the duration
@@ -146,7 +137,7 @@ extends AbstractSegment
 				// duration for subsequent call to getTotalDuration() as well as total unique counter for
 				// subsequent call to getTotalUniques(). Call to incrementUniqueValues() must therefore
 				// precede either call to other two methods called out in this comment.
-				System.out.println(
+				LOG.info(
 					String.format(
 						"\nDuring the last %d seconds, %d unique 9-digit inputs were logged and %d redundant inputs were discarded.\nSince service launch (%d seconds), %d unique 9-digit inputs have been logged.\n",
 						Long.valueOf(
@@ -169,59 +160,9 @@ extends AbstractSegment
 						.append(" allocated.\n");
 				}
 
-				System.out.println(strBldr.toString());
+				LOG.info(strBldr.toString());
 			});
-//      .consume(evt -> {
-//         final int deltaUniques = evt.getDeltaUniques();
-//         final int deltaDuplicates = evt.getDeltaDuplicates();
-//         evt.release();
-//
-//         final long currentNanos = System.nanoTime();
-//         LOG.info(
-//            "Over the past {} seconds, we accepted {} records and rejected {} duplicates.",
-//            new Object[] {
-//               Long.valueOf(
-//                  TimeUnit.NANOSECONDS.toSeconds(currentNanos - lastUpdateNanos[0])),
-//               Integer.valueOf(deltaUniques), Integer.valueOf(deltaDuplicates) }
-//         );
-//         lastUpdateNanos[0] = currentNanos;
-//      });
-//
-//      // Connect a reporting consumer to start the data flow and save its Control handle to cancel it during
-//      // a controlled shutdown.
-//      // terminalControl =
-//         writeOutputFileSegment.getReportCounterIncrementsStream()
-//         .process(counterIncrementsProcessor)
-//         // .log("Incoming stats!")
-//         .observeCancel(evt -> {
-//            // Toggle the first seenOnComplete flag once input to the final window is recognized by
-//            // observing a SHUTDOWN event being fed to the window boundary.  Note that we are taking
-//            // advantage observeCancel()'s bug that causes it to trigger on SHUTDOWN signals rather
-//            // than CANCEL signals since there is no native observeShutdown() observer!
-//            shutdownLock.lock();
-//            try {
-//               seenOnComplete[0] = true;
-//               LOG.info("Performance stats segment receives an end of stream signal.  No additional data will follow.");
-//            } finally {
-//               shutdownLock.unlock();
-//            }
-//         })
-//         .window(pulseInterval, pulseTimeUnit, reportTimer)
-//         .concatMap( windowStream -> {
-//            return windowStream.reduce((lastDelta, nextDelta) -> {
-//               nextDelta.incrementDeltas(lastDelta);
-//               lastDelta.release();
-//               return nextDelta;
-//            });
-//         })
-//         .window(pulseCountPerReport, reportIntervalInSeconds, TimeUnit.SECONDS, reportTimer)
-//         .consume( windowStrm2 -> {
-//            windowStrm2.reduce((lastDelta, nextDelta) -> {
-//               nextDelta.incrementDeltas(lastDelta);
-//               lastDelta.release();
-//               return nextDelta;
-//            })
-//         });
+
 		LOG.info("Data collection is online");
 
 		return evt -> {

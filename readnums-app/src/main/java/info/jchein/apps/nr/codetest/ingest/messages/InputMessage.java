@@ -8,6 +8,7 @@ import info.jchein.apps.nr.codetest.ingest.config.Constants;
 import info.jchein.apps.nr.codetest.ingest.reusable.AbstractReusableObject;
 import info.jchein.apps.nr.codetest.ingest.reusable.IReusableObjectInternal;
 import info.jchein.apps.nr.codetest.ingest.reusable.OnReturnCallback;
+import info.jchein.apps.nr.codetest.ingest.segments.tcpserver.InputMessageCodec;
 
 public class InputMessage
 extends AbstractReusableObject<IInputMessage, InputMessage>
@@ -16,10 +17,15 @@ implements IInputMessage
 	private static final OnReturnCallback FLYWEIGHT_ON_RETURN_PLACEHOLDER =
 		(final IReusableObjectInternal<?> l) -> { /* No Operation */ };
    private static final int FLYWEIGHT_POOL_INDEX = -905;
+	private static final byte[] MESSAGE_RESET_BYTES = new byte[Constants.FILE_ENTRY_SIZE];
+
+
+	static {
+		Arrays.fill(MESSAGE_RESET_BYTES, (byte) 0);
+	}
 
    private final IInputMessage.MessageKind kind;
    private final byte[] messageBytes;
-   private int prefix;
    private short suffix;
    private byte partitionIndex;
 
@@ -35,11 +41,13 @@ implements IInputMessage
    {
       super(onReturn, poolIndex);
       kind = IInputMessage.MessageKind.NINE_DIGITS;
+		suffix = Short.MIN_VALUE;
+		partitionIndex = Byte.MIN_VALUE;
       messageBytes = new byte[Constants.FILE_ENTRY_SIZE];
-      System.arraycopy(Constants.DELIMITER_BYTES, 0, messageBytes, Constants.VALID_MESSAGE_SIZE, Constants.DELIMITER_SIZE);
-      prefix = Integer.MIN_VALUE;
-      suffix = Short.MIN_VALUE;
-      partitionIndex = Byte.MIN_VALUE;
+		Arrays.fill(messageBytes, (byte) 0);
+		System.arraycopy(
+			Constants.DELIMITER_BYTES, 0, messageBytes,
+			Constants.VALID_MESSAGE_SIZE, Constants.DELIMITER_SIZE);
    }
 
 
@@ -53,10 +61,19 @@ implements IInputMessage
       super( FLYWEIGHT_ON_RETURN_PLACEHOLDER, FLYWEIGHT_POOL_INDEX );
       kind = messageKind;
       messageBytes = null;
-      prefix = Integer.MAX_VALUE;
-      suffix = Short.MAX_VALUE;
-      partitionIndex = Byte.MAX_VALUE;
+		suffix = Short.MIN_VALUE;
+		partitionIndex = Byte.MIN_VALUE;
    }
+
+
+	private static final String TYPE_DISPLAY_NAME = InputMessage.class.getSimpleName();
+
+
+	@Override
+	protected String getTypeName()
+	{
+		return TYPE_DISPLAY_NAME;
+	}
 
 
    @Override
@@ -79,27 +96,20 @@ implements IInputMessage
 
 
    @Override
-   public final int getMessage()
-   {
-      return (prefix*1000) + suffix;
-   }
-
-
-   @Override
    public final int getPrefix()
    {
-      return prefix;
+		return InputMessageCodec.parsePrefix(this.messageBytes);
    }
 
 
    @Override
-   public final short getSuffix()
-   {
-      return suffix;
-   }
+	public final short getSuffix()
+	{
+		return this.suffix;
+	}
 
 
-   @Override
+	@Override
    public final byte getPartitionIndex()
    {
       return partitionIndex;
@@ -114,51 +124,53 @@ implements IInputMessage
 
 
    @Override
-   public final void setMessagePayload(
-      final byte[] bytes, final int messagePrefix, final short messageSuffix, final byte numPartitions )
+	public final InputMessage setMessagePayload(
+   	final byte[] bytes, final short messageSuffix, final byte partitionIndex)
    {
       Preconditions.checkState(
-         kind == IInputMessage.MessageKind.NINE_DIGITS,
+			this.kind == IInputMessage.MessageKind.NINE_DIGITS,
          "Only NINE_DIGITS message types acquired from a ReusableObjectAllocator support assignable state");
-
-      System.arraycopy(bytes, 0, messageBytes, 0, Constants.VALID_MESSAGE_SIZE);
-      prefix = messagePrefix;
-      suffix = messageSuffix;
-      partitionIndex = (byte) (messageSuffix % numPartitions);
-		super.afterWrite();
+		System.arraycopy(bytes, 0, this.messageBytes, 0, Constants.VALID_MESSAGE_SIZE);
+		this.suffix = messageSuffix;
+		this.partitionIndex = partitionIndex;
+		return super.afterWrite();
    }
 
 
    @Override
    public final void recycle()
    {
-      Arrays.fill(messageBytes, (byte) 0);
-      prefix = Integer.MIN_VALUE;
-      suffix = Short.MIN_VALUE;
-      partitionIndex = Byte.MIN_VALUE;
+		assert this.kind == IInputMessage.MessageKind.NINE_DIGITS;
+		this.suffix = Short.MIN_VALUE;
+		this.partitionIndex = Byte.MIN_VALUE;
+		System.arraycopy(MESSAGE_RESET_BYTES, 0, this.messageBytes, 0, Constants.VALID_MESSAGE_SIZE);
    }
 
 
    @Override
    protected final String innerToString()
    {
-      if (kind == IInputMessage.MessageKind.NINE_DIGITS) return
-         new StringBuilder()
-         .append("InputMessage [kind=")
-         .append(kind)
-         .append(", prefix=")
-         .append(prefix)
-         .append(", suffix=")
-         .append(suffix)
-         .append(", partitionIndex=")
-         .append(partitionIndex)
-         .append("]")
-         .toString();
+		if (this.kind == IInputMessage.MessageKind.NINE_DIGITS)
+			return new StringBuilder()
+				.append("InputMessage [kind=")
+				.append(this.kind)
+				.append(", prefix=")
+				.append(
+					InputMessageCodec.parsePrefix(
+						this.messageBytes))
+				.append(", suffix=")
+				.append(this.suffix)
+				.append(", partitionIndex=")
+				.append(this.partitionIndex)
+				.append(", messageBytes=")
+				.append(
+					Arrays.toString(this.messageBytes))
+				.append("]")
+				.toString();
       else
-         return
-            new StringBuilder()
-            .append("InputMessage [kind=")
-            .append(kind)
+      	return new StringBuilder()
+      		.append("InputMessage [kind=")
+            .append(this.kind)
             .append("]")
             .toString();
    }

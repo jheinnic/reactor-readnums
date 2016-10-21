@@ -42,7 +42,7 @@ public class ParametersConfiguration
    @Value("1")
    public int lifecycleEventBusThreads;
 
-	@Value("64")
+	@Value("8")
    public int lifecycleEventBusBufferSize;
 
    /*===========================+
@@ -58,23 +58,23 @@ public class ParametersConfiguration
    @Value("5")
    public int maxConcurrentSockets;
 
-   @Value("1048576")
+	@Value("32768")
    public int socketReceiveBufferBytes;
 
    @Value("1500")
    public int socketTimeoutMilliseconds;
 
-	@Value("2048")
-   public int inputMsgAllocBatchSize;
+	// @Value("2048")
+	// public int inputMsgAllocBatchSize;
 
-	@Value("4000000")
-   public int peakMsgsPerSecondExpected;
+	// @Value("4000000")
+	// public int peakMsgsPerSecondExpected;
 
    /*==========================+
     | Input Segment Parameters |
     +==========================*/
 
-	@Value("32")
+	@Value("16")
    public int fanOutRingBufferSize;
 
    @Value("4")
@@ -116,7 +116,7 @@ public class ParametersConfiguration
     | Log Writer Segment Parameters |
     +===============================*/
 
-	@Value("64")
+	@Value("32")
    public int writeOutputRingBufferSize;
 
    // @Value("#{systemProperties.myProp}:numbers.log")
@@ -146,6 +146,6 @@ public class ParametersConfiguration
    @Value("10")
    public int reportIntervalSeconds;
 
-	@Value("64")
+	@Value("16")
    public int perfCounterRingBufferSize;
 }

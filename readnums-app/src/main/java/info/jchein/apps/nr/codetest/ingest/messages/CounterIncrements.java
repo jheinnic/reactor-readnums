@@ -10,12 +10,21 @@ implements ICounterIncrements
    public int deltaUniques;
    public int deltaDuplicates;
 
-
    public CounterIncrements(final OnReturnCallback onReleased, final int poolIndex) {
       super(onReleased, poolIndex);
       deltaUniques = 0;
       deltaDuplicates = 0;
    }
+
+
+	private static final String TYPE_DISPLAY_NAME = CounterIncrements.class.getSimpleName();
+
+
+	@Override
+	protected String getTypeName()
+	{
+		return TYPE_DISPLAY_NAME;
+	}
 
 
    @Override

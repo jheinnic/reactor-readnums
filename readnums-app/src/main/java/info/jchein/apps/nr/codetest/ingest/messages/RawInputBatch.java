@@ -50,6 +50,16 @@ implements IRawInputBatch
    }
 
 
+	private static final String TYPE_DISPLAY_NAME = RawInputBatch.class.getSimpleName();
+
+
+	@Override
+	protected String getTypeName()
+	{
+		return TYPE_DISPLAY_NAME;
+	}
+
+
    @Override
    public final IRawInputBatch castToInterface() {
       return this;

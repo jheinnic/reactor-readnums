@@ -1,6 +1,9 @@
 package info.jchein.apps.nr.codetest.ingest.reusable;
 
 
+import javax.validation.constraints.Min;
+import javax.validation.constraints.NotNull;
+
 /**
  * Factory instance used by a {@link ReusableAllocator<?>} to populate its pool of reusable object.  It is meant
  * to be implemented by developers to provide any specialized construction semantics needed to satisfy their
@@ -17,7 +20,7 @@ package info.jchein.apps.nr.codetest.ingest.reusable;
  * @author John Heinnickel
  */
 @FunctionalInterface
-public interface IReusableObjectFactory<T extends AbstractReusableObject<?, T>>
+public interface IReusableObjectFactory<I extends IReusable>
 {
    /**
     * Accepts an on-release callback and pooled object ID from its parent{@link StrippedReusableObjectAllocator}
@@ -33,5 +36,7 @@ public interface IReusableObjectFactory<T extends AbstractReusableObject<?, T>>
     *             
     * @see ReusableObjectFactory<T>
     */
-    T apply(OnReturnCallback onReturnCallback, int pooledObjectIndex);
+	@NotNull
+	IReusableObjectInternal<I>
+	apply(@NotNull OnReturnCallback onReturnCallback, @Min(value = 0) int pooledObjectIndex);
 }

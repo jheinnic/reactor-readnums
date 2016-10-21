@@ -54,10 +54,12 @@ extends AbstractSegment
                .rcvbuf(socketReceiveBufferSize)
                .backlog(maxConcurrentSockets)
                .timeout(socketTimeoutMillis)
-					.prefetch(10) // Long.MAX_VALUE)
-               .keepAlive(false)
+					.prefetch(Long.MAX_VALUE) // 10)
 					.tcpNoDelay(false)
-               .sndbuf(8192)
+					.keepAlive(true)
+					.reuseAddr(true)
+					.sndbuf(1024)
+					.linger(5)
             )
             .listen(bindHost, bindPort);
          });
@@ -67,7 +69,7 @@ extends AbstractSegment
    @Override
    public int getPhase()
    {
-      return 400;
+		return 900;
    }
 
 

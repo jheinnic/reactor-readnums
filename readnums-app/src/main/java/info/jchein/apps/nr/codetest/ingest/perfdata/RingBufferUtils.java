@@ -2,6 +2,8 @@ package info.jchein.apps.nr.codetest.ingest.perfdata;
 
 import java.lang.reflect.Field;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.util.StringUtils;
 
 import com.google.common.base.Preconditions;
@@ -10,7 +12,7 @@ import reactor.jarjar.com.lmax.disruptor.RingBuffer;
 
 public final class RingBufferUtils
 {
-   // private static final Logger LOG = LoggerFactory.getLogger(RingBufferUtils.class);
+	private static final Logger LOG = LoggerFactory.getLogger(RingBufferUtils.class);
 
    private RingBufferUtils() { }
    
@@ -46,21 +48,22 @@ public final class RingBufferUtils
          ringBufferField.setAccessible(true);
          return (RingBuffer<?>) ringBufferField.get(dispatchPowered);
       } catch (NoSuchFieldException | SecurityException e1) {
-         // LOG.warn("Could not find the ringBuffer field for " + role, e1);
+			LOG.warn("Could not find the ringBuffer field for " + name, e1);
       } catch (IllegalArgumentException | IllegalAccessException e2) {
-         // LOG.warn("Could not access the ringBuffer field for " + role, e2);
+			LOG.warn("Could not access the ringBuffer field for " + name, e2);
       }
       
       return null;
    }
    
-   // Ring buffers must be sized by a power of two.
    private static final double LN_TWO = Math.log(2);
-   public static int nextSmallestPowerOf2(int goalValue)
+
+
+	// Ring buffers must be sized by a power of two.
+	public static int nextSmallestPowerOf2(final int goalValue)
    {
       final int retVal =  Math.round((float) Math.pow(2, Math.ceil(Math.log(goalValue) / LN_TWO)));
       // LOG.info("{} is the smallest power of 2 at least as large as {}", retVal, ioCount);
       return retVal;
    }
-
 }

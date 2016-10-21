@@ -75,9 +75,8 @@ public class TryBuffer
          new CounterIncrementsAllocator(2048, false);
 
       final Codec<Buffer, IInputMessage, IInputMessage> msgCodec =
-         new DelimitedCodec<IInputMessage, IInputMessage>(
-            true,
-            new InputMessageCodec(numDataPartitions, 16384, msgAlloc));
+			new DelimitedCodec<>(
+				true, new InputMessageCodec(numDataPartitions, msgAlloc));
 
       final TcpServer<IInputMessage, IInputMessage> tcpServer =
          NetStreams.<IInputMessage,

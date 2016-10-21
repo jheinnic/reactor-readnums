@@ -4,6 +4,9 @@ package info.jchein.apps.nr.codetest.ingest.segments.logunique;
 import java.util.ArrayList;
 import java.util.concurrent.TimeUnit;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import info.jchein.apps.nr.codetest.ingest.lifecycle.AbstractSegment;
 import info.jchein.apps.nr.codetest.ingest.messages.IInputMessage;
 import info.jchein.apps.nr.codetest.ingest.messages.IWriteFileBuffer;
@@ -17,40 +20,43 @@ import reactor.core.Dispatcher;
 import reactor.fn.Function;
 import reactor.fn.timer.Timer;
 import reactor.rx.Stream;
+import reactor.rx.Streams;
 import reactor.rx.broadcast.Broadcaster;
-import reactor.rx.stream.GroupedStream;
 
 
 public class BatchInputSegment
 extends AbstractSegment
 implements IStatsProviderSupplier
 {
-	// private static final Logger LOG = LoggerFactory.getLogger(BatchInputSegment.class);
+	private static final Logger LOG = LoggerFactory.getLogger(BatchInputSegment.class);
 
 	private final short ioCount;
 	private final long ioPeriod;
 	private final TimeUnit ioTimeUnit;
 	private final byte numDataPartitions;
-	private final Timer ingestionTimer;
 	private final IUniqueMessageTrie uniqueTest;
-	private final Broadcaster<Stream<GroupedStream<Integer, IInputMessage>>> streamsToMerge;
+
+	private final Timer ingestionTimer;
+	private final Dispatcher handoffDispatcher;
+	private final Dispatcher rawInputDispatcher;
+
+	private final Broadcaster<Stream<IInputMessage>> streamsToMerge;
+	private final ArrayList<Broadcaster<IInputMessage>> fanOutBroadcasters;
 	private final IReusableAllocator<IWriteFileBuffer> writeFileBufferAllocator;
-	// private final Processor<GroupedStream<Integer, IInputMessage>, GroupedStream<Integer, IInputMessage>>[]
-	// fanOutProcessors;
-	private final Dispatcher socketHandoffDispatcher;
-	private final Dispatcher[] fanOutDispatchers;
 
 	private Stream<IWriteFileBuffer> loadedWriteFileBufferStream;
+	private final ArrayList<Stream<IWriteFileBuffer>> streamTerminals;
+	private final int[] skipCounters;
 
 
 	public BatchInputSegment( final short ioCount, final long ioPeriod, final TimeUnit ioTimeUnit,
 		final byte numDataPartitions, final EventBus eventBus, final Timer ingestionTimer,
 		final IUniqueMessageTrie uniqueTest,
-		final Broadcaster<Stream<GroupedStream<Integer, IInputMessage>>> streamsToMerge,
+		final Broadcaster<Stream<IInputMessage>> streamsToMerge,
 		final IReusableAllocator<IWriteFileBuffer> writeFileBufferAllocator,
-		final Dispatcher socketHandoffDispatcher,
-		final Dispatcher[] fanOutDispatchers )
-		// final Processor<GroupedStream<Integer, IInputMessage>, GroupedStream<Integer, IInputMessage>>[] fanOutDispatchers )
+		final Dispatcher rawInputDispatcher,
+		final Dispatcher handoffDispatcher,
+		final ArrayList<Broadcaster<IInputMessage>> fanOutBroadcasters )
 	{
 		super(eventBus);
 		this.ioCount = ioCount;
@@ -58,11 +64,16 @@ implements IStatsProviderSupplier
 		this.ioTimeUnit = ioTimeUnit;
 		this.uniqueTest = uniqueTest;
 		this.ingestionTimer = ingestionTimer;
-		this.numDataPartitions = numDataPartitions;
 		this.streamsToMerge = streamsToMerge;
-		this.socketHandoffDispatcher = socketHandoffDispatcher;
+		this.numDataPartitions = numDataPartitions;
+		this.fanOutBroadcasters = fanOutBroadcasters;
+		this.rawInputDispatcher = rawInputDispatcher;
+		this.handoffDispatcher = handoffDispatcher;
 		this.writeFileBufferAllocator = writeFileBufferAllocator;
-		this.fanOutDispatchers = fanOutDispatchers;
+
+		this.streamTerminals = new ArrayList<>(this.numDataPartitions);
+		this.skipCounters = new int[this.numDataPartitions];
+
 	}
 
 
@@ -91,28 +102,55 @@ implements IStatsProviderSupplier
 		// -- Apply filtering test for uniqueness
 		// -- Load a merged write buffer and counters
 		// -- Dispatch to the I/O thread
-		this.loadedWriteFileBufferStream = this.streamsToMerge.subscribeOn(this.socketHandoffDispatcher)
-			.<GroupedStream<Integer, IInputMessage>> merge()
-			.<Integer> groupBy(channelSubStream -> channelSubStream.key())
-			.<IWriteFileBuffer> flatMap(
-				partitionStream -> partitionStream
-					.subscribeOn(this.fanOutDispatchers[partitionStream.key()])
-					.<IInputMessage> merge()
-					.window(this.ioCount, this.ioPeriod, this.ioTimeUnit, this.ingestionTimer)
-					.<IWriteFileBuffer> flatMap(nestedWindow -> {
-						return nestedWindow.reduce(
-							this.writeFileBufferAllocator.allocate(),
-							(final IWriteFileBuffer writeBuf, final IInputMessage msg) -> {
-							msg.beforeRead();
-							if (this.uniqueTest.isUnique(msg.getPrefix(), msg.getSuffix()))
-								writeBuf.acceptUniqueInput(msg.getMessageBytes());
-							else writeBuf.trackSkippedDuplicates(1);
-							msg.release();
 
-							return writeBuf;
-						})
-							.<IWriteFileBuffer> map(writeBuf -> writeBuf.afterWrite());
-					}));
+		for (int ii = 0; ii < this.numDataPartitions; ii++) {
+			final int partitionIndex = ii;
+			final Broadcaster<IInputMessage> nextBcast = this.fanOutBroadcasters.get(ii);
+			
+			streamTerminals.add(nextBcast.log("on broadcast")
+				.filter(inputMsg -> {
+				inputMsg.beforeRead();
+				if (this.uniqueTest.isUnique(inputMsg.getPrefix(), inputMsg.getSuffix())) {
+					return true;
+				} else {
+					skipCounters[partitionIndex] += 1;
+					return false;
+				}
+			})
+				.buffer(this.ioCount, this.ioPeriod, this.ioTimeUnit, this.ingestionTimer)
+				.log("Buffer2")
+				.map(messageList -> {
+					IWriteFileBuffer retVal = this.writeFileBufferAllocator.allocate();
+					for (IInputMessage nextMsg : messageList) {
+						retVal.acceptUniqueInput(nextMsg.getMessageBytes());
+					}
+					retVal.trackSkippedDuplicates(skipCounters[partitionIndex]);
+					skipCounters[partitionIndex] = 0;
+
+					retVal.afterWrite();
+					return retVal;
+				})
+				.log("for writer"));
+		}
+
+		this.streamsToMerge.<IInputMessage> merge()
+			.capacity(this.ioCount)
+			.window(this.ioCount, this.ioPeriod, this.ioTimeUnit, this.ingestionTimer)
+			.log("Window")
+			.consumeOn(this.rawInputDispatcher, batchedStream -> {
+				batchedStream.groupBy(
+					inputMsg -> Integer.valueOf(inputMsg.getPartitionIndex())
+				).consumeOn(this.rawInputDispatcher, groupedStream -> {
+					final Broadcaster<IInputMessage> groupBroadcaster = 
+						this.fanOutBroadcasters.get(groupedStream.key());
+					groupedStream.consume(inputMsg -> {
+						groupBroadcaster.onNext(inputMsg);
+					});
+				});
+			});
+
+		this.loadedWriteFileBufferStream = Streams.merge(streamTerminals)
+			.log("Transformed and merged");
 
 		return evt -> Boolean.TRUE;
 	}
@@ -127,12 +165,21 @@ implements IStatsProviderSupplier
 	@Override
 	public Iterable<IStatsProvider> get()
 	{
-		final ArrayList<IStatsProvider> retVal = new ArrayList<>(numDataPartitions);
-		for (int ii = 0; ii < numDataPartitions; ii++) {
+		final ArrayList<IStatsProvider> retVal =
+			new ArrayList<>(this.numDataPartitions);
+		for (int ii = 0; ii < this.numDataPartitions; ii++) {
 			retVal.add(
 				new ResourceStatsAdapter(
-					"Partitioned Input RingBufferProcessor-" + ii, fanOutDispatchers[ii]));
+					"Partitioned Input RingBufferProcessor-" + ii,
+					this.fanOutBroadcasters.get(ii).getDispatcher()));
 		}
+		retVal.add(
+			new ResourceStatsAdapter(
+				"Handoff RingBufferProcessor", this.handoffDispatcher));
+		retVal.add(
+			new ResourceStatsAdapter(
+				"Raw Input RingBufferProcessor", this.rawInputDispatcher));
+
 		return retVal;
 	}
 }

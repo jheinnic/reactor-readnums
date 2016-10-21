@@ -46,7 +46,7 @@ import reactor.core.support.Recyclable;
  *           Every concrete subclass should its own class so {@link Reference<T>} can self resolve.
  * @see ReusableEventAllocator#get(Class)
  */
-public abstract class AbstractReusableObject<I extends IReusable, C extends AbstractReusableObject<I, C>>
+public abstract class AbstractReusableObject<I extends IReusable, C extends AbstractReusableObject<? super C, C>>
 implements IReusableObjectInternal<I>, IReusable, Recyclable
 {
 	// private static final Logger LOG = LoggerFactory.getLogger(AbstractReusableObject.class);
@@ -91,8 +91,6 @@ implements IReusableObjectInternal<I>, IReusable, Recyclable
 	// 1.
    private volatile int syncBit = 1;
 
-	private final String simpleClassName;
-
 
    protected AbstractReusableObject( final OnReturnCallback releaseCallback, final int poolIndex )
    {
@@ -100,8 +98,10 @@ implements IReusableObjectInternal<I>, IReusable, Recyclable
       this.releaseCallback = releaseCallback;
       this.inception = System.nanoTime();
       this.poolIndex = poolIndex;
-		this.simpleClassName = this.getClass().getSimpleName();
    }
+
+
+	protected abstract String getTypeName();
 
 
    /*
@@ -145,7 +145,7 @@ implements IReusableObjectInternal<I>, IReusable, Recyclable
 		Verify.verify(
 			this.syncBit == 1,
 			"Volatile synchronization bit was not set to 1 before reusable {} with index {} was just reserved",
-			simpleClassName,
+			this.getTypeName(),
 			this.getPoolIndex());
 
 		return incr;

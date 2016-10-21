@@ -31,7 +31,7 @@ import com.google.common.base.Verify;
  *
  * @author John Heinnickel
  */
-public class ReusableObjectAllocator<I extends IReusable, T extends AbstractReusableObject<I, T>>
+public class ReusableObjectAllocator<I extends IReusable, T extends AbstractReusableObject<I, ?>>
 implements IReusableAllocator<I>
 {
 	private static final Logger LOG = LoggerFactory.getLogger(ReusableObjectAllocator.class);
@@ -40,26 +40,26 @@ implements IReusableAllocator<I>
 	private final BitSet leaseMask;
 	private final boolean poolSizeFixed;
 	private final ReentrantLock leaseLock;
-	private final ArrayList<T> availablePool;
-	private final IReusableObjectFactory<T> factory;
+	private final ArrayList<IReusableObjectInternal<I>> availablePool;
+	private final IReusableObjectFactory<I> factory;
 	private final OnReturnCallback onReturnCallback;
 	private int nextLeasedIndex;
 	private boolean upwardSweep;
 
 
-	public ReusableObjectAllocator( final IReusableObjectFactory<T> factory )
+	public ReusableObjectAllocator( final IReusableObjectFactory<I> factory )
 	{
 		this(DEFAULT_SIZE, factory, false);
 	}
 
 
-	public ReusableObjectAllocator( final int initialSize, final IReusableObjectFactory<T> factory )
+	public ReusableObjectAllocator( final int initialSize, final IReusableObjectFactory<I> factory )
 	{
 		this(initialSize, factory, false);
 	}
 
 
-	public ReusableObjectAllocator( final int initialSize, final IReusableObjectFactory<T> factory,
+	public ReusableObjectAllocator( final int initialSize, final IReusableObjectFactory<I> factory,
 		final boolean poolSizeFixed )
 	{
 		this.factory = factory;
@@ -94,55 +94,10 @@ implements IReusableAllocator<I>
 	@Override
 	public I allocate()
 	{
-		T ref;
-
-		this.leaseLock.lock();
-		try {
-			// if(this.syncBit) { } else { }
-			final int len = this.availablePool.size();
-			if (this.upwardSweep) {
-				this.nextLeasedIndex = this.leaseMask.nextClearBit(this.nextLeasedIndex);
-				if (this.nextLeasedIndex >= len) {
-					this.upwardSweep = false;
-					this.nextLeasedIndex = this.leaseMask.previousClearBit(this.nextLeasedIndex - 1);
-				}
-			} else {
-				this.nextLeasedIndex = this.leaseMask.previousClearBit(this.nextLeasedIndex);
-				if (this.nextLeasedIndex < 0) {
-					this.upwardSweep = true;
-					this.nextLeasedIndex = this.leaseMask.nextClearBit(this.nextLeasedIndex + 1);
-				}
-			}
-
-			// If we failed to find an unreserved index bit, either fail or expand based on whether the
-			// pool size is fixed or expandable.
-			if ((this.nextLeasedIndex >= len) || (this.nextLeasedIndex < 0)) {
-				if (this.poolSizeFixed)
-					throw new IllegalStateException("ReusableObjectAllocator's object supply is exhausted!");
-				else {
-					expand(len);
-				}
-			}
-
-			// Mark the object as reserved in its own encapsulated state. The boolean value returned is just to
-			// avoid JIT hotspot from compiling away the volatile sync involved. IF this method encounters a real
-			// problem, it will throw an Exception, not return false. Read the object's volatile sync bit before
-			// returning it, just in case the recipient doesn't take the same precaution.
-			ref = this.availablePool.get(this.nextLeasedIndex);
-			ref.reserve();
-			// this.syncBit = false;
-
-			this.leaseMask.set(this.nextLeasedIndex);
-			this.nextLeasedIndex += this.upwardSweep ? 1 : -1;
-			checkForSweepInversion();
-
-			// We have completed reservation as far as the common data structures are concerned. We can initialize
-			// the served object outside of the shared locks because it neither consumes nor produces shared state.
-			return ref.castToInterface();
-		}
-		finally {
-			this.leaseLock.unlock();
-		}
+		final IReusableObjectInternal<I> retVal =
+			this.factory.apply(onReturnCallback, nextLeasedIndex++);
+		retVal.reserve();
+		return retVal.castToInterface();
 	}
 
 
@@ -378,7 +333,7 @@ implements IReusableAllocator<I>
 	}
 
 
-	private T constructNext(final int index)
+	private IReusableObjectInternal<I> constructNext(final int index)
 	{
 		return this.factory.apply(this.onReturnCallback, index);
 	}

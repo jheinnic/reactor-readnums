@@ -61,15 +61,13 @@ public class TryBufferFive
    {
       final byte numDataPartitions = (byte) 4;
 
-      @SuppressWarnings("unused")
       final Environment reactorEnv = Environment.initializeIfEmpty()
-      .assignErrorJournal(err ->
-      {
-         LOG.error("Envrionment was asked to route unhandled exception: ", err);
-         err.printStackTrace();
-      });
+			.assignErrorJournal(err -> {
+				LOG.error("Envrionment was asked to route unhandled exception: ", err);
+			});
 
-      final IReusableAllocator<IInputMessage> msgAlloc = new InputMessageAllocator(2097152, false);
+      final IReusableAllocator<IInputMessage> msgAlloc =
+      	new InputMessageAllocator(2097152, false);
 
       final IReusableAllocator<IRawInputBatch> batchAlloc =
          new RawInputBatchAllocator(1024, false, 3000);
@@ -82,8 +80,7 @@ public class TryBufferFive
 
       final Codec<Buffer, IInputMessage, IInputMessage> msgCodec =
 			new DelimitedCodec<>(
-            true,
-            new InputMessageCodec(numDataPartitions, 16384, msgAlloc));
+            true, new InputMessageCodec(numDataPartitions, msgAlloc));
 
       final TcpServer<IInputMessage, IInputMessage> tcpServer =
          NetStreams.<IInputMessage,
@@ -169,7 +166,7 @@ public class TryBufferFive
                      msg.beforeRead();
                      final int prefix = msg.getPrefix();
                      final short suffix = msg.getSuffix();
-                     final int message = msg.getMessage();
+							final int message = InputMessageCodec.parseMessage(msg.getMessageBytes());
                      msg.release();
 
                      if (uniqueTrie.isUnique(prefix, suffix)) {

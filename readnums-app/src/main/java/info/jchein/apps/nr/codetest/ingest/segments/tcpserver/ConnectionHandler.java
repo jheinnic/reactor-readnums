@@ -9,14 +9,12 @@ import org.slf4j.LoggerFactory;
 
 import info.jchein.apps.nr.codetest.ingest.messages.IInputMessage;
 import io.netty.channel.Channel;
-import reactor.core.Dispatcher;
 import reactor.fn.Consumer;
 import reactor.io.net.ChannelStream;
 import reactor.io.net.ReactorChannelHandler;
 import reactor.rx.Stream;
 import reactor.rx.Streams;
 import reactor.rx.broadcast.Broadcaster;
-import reactor.rx.stream.GroupedStream;
 
 public class ConnectionHandler
 implements ReactorChannelHandler<IInputMessage, IInputMessage, ChannelStream<IInputMessage, IInputMessage>>
@@ -34,20 +32,17 @@ implements ReactorChannelHandler<IInputMessage, IInputMessage, ChannelStream<IIn
 
    private final int maxConcurrentSockets;
 	private final Consumer<Void> terminationConsumer;
-	private final Broadcaster<Stream<GroupedStream<Integer, IInputMessage>>> streamsToMerge;
-	private final Dispatcher socketHandoffDispatcher;
+	private final Broadcaster<Stream<IInputMessage>> streamsToMerge;
    private final AtomicReference<SocketRegistry> socketRegistryHolder;
 
 
 
 	public ConnectionHandler(
 		final int maxConcurrentSockets, final Consumer<Void> terminationConsumer,
-		final Dispatcher socketHandoffDispatcher,
-		final Broadcaster<Stream<GroupedStream<Integer, IInputMessage>>> streamsToMerge )
+		final Broadcaster<Stream<IInputMessage>> streamsToMerge )
 	{
       this.maxConcurrentSockets = maxConcurrentSockets;
 		this.terminationConsumer  = terminationConsumer;
-		this.socketHandoffDispatcher = socketHandoffDispatcher;
       this.streamsToMerge       = streamsToMerge;
 		this.socketRegistryHolder = 
 			new AtomicReference<>(
@@ -64,14 +59,13 @@ implements ReactorChannelHandler<IInputMessage, IInputMessage, ChannelStream<IIn
       };
 
 		this.streamsToMerge.onNext(
-			channelStream.dispatchOn(this.socketHandoffDispatcher)
-			.filter(evt -> {
+			channelStream.filter(evt -> {
 				switch (evt.getKind()) {
 					case NINE_DIGITS: {
 						return true;
 					}
 					case TERMINATE_CMD: {
-						terminationConsumer.accept(null);
+						this.terminationConsumer.accept(null);
 						closeChannel(channelStream);
 						break;
 					}
@@ -79,13 +73,9 @@ implements ReactorChannelHandler<IInputMessage, IInputMessage, ChannelStream<IIn
 						closeChannel(channelStream);
 					}
 				}
-
+	
 				return false;
-			})
-			.groupBy(evt -> {
-				return Byte.toUnsignedInt(evt.getPartitionIndex());
-			})
-      );
+			}));
 
       // This server has no need to write data back out to the client, so wire the to-Client duplex side of
       // channelStream to process a Stream that contains zero message signals followed by an onComplete signal. Make

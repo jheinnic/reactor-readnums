@@ -3,15 +3,9 @@ package info.jchein.apps.nr.codetest.ingest.segments.tcpserver;
 import static info.jchein.apps.nr.codetest.ingest.messages.IInputMessage.MessageKind.INVALID_INPUT;
 import static info.jchein.apps.nr.codetest.ingest.messages.IInputMessage.MessageKind.TERMINATE_CMD;
 
-import java.util.ArrayList;
-import java.util.Iterator;
-
-import com.google.common.base.Verify;
-
 import info.jchein.apps.nr.codetest.ingest.config.Constants;
 import info.jchein.apps.nr.codetest.ingest.messages.IInputMessage;
 import info.jchein.apps.nr.codetest.ingest.messages.InputMessage;
-import info.jchein.apps.nr.codetest.ingest.reusable.IReusable;
 import info.jchein.apps.nr.codetest.ingest.reusable.IReusableAllocator;
 import reactor.fn.Consumer;
 import reactor.fn.Function;
@@ -31,8 +25,8 @@ extends Codec<Buffer, IInputMessage, IInputMessage>
    private static final byte BYTE_NL = 13;
 
    private static final byte INT_PLACE_1s = 8;
-   // private static final byte INT_PLACE_10s = 7;
-   // private static final byte INT_PLACE_100s = 6;
+	private static final byte INT_PLACE_10s = 7;
+	private static final byte INT_PLACE_100s = 6;
    private static final byte INT_PLACE_1000s = 5;
    // private static final byte INT_PLACE_10000s = 4;
    // private static final byte INT_PLACE_100000s = 3;
@@ -47,11 +41,15 @@ extends Codec<Buffer, IInputMessage, IInputMessage>
 
    // Eliminate the need for multiplication when mapping a nine digit byte sequence to an integer by indexing partial
    // sums from a static finally created table generated once on class loading MessageUtils.
-   protected static final int[][] INT_DECIMAL_PLACES = new int[9][10];
-   protected static final int[][] INT_PREFIX_PLACES = new int[6][10];
-   protected static final short[][] SHORT_SUFFIX_PLACES = new short[9][10];
+	private static final int[][] INT_DECIMAL_PLACES = new int[9][10];
+	private static final int[][] INT_PREFIX_PLACES = new int[6][10];
 
-    static {
+	// To avoid converting indices 6, 7, and 8 to 0, 1, and 2, this array makes a tradeoff
+	// by allocating unused data cells for first-dimension indices 0 through 5.
+	private static final short[][] SHORT_SUFFIX_PLACES = new short[9][10];
+
+
+	static {
       int intPlaceBase = 1;
       int intPlaceValue = 0;
       for (int ii = INT_PLACE_1s; ii >= 0; ii--, intPlaceBase = intPlaceValue, intPlaceValue = 0) {
@@ -69,80 +67,84 @@ extends Codec<Buffer, IInputMessage, IInputMessage>
 
       short shortPlaceBase = 1;
       short shortPlaceValue = 0;
-      for (int ii = INT_PLACE_1s; ii >= 6; ii--, shortPlaceBase = shortPlaceValue, shortPlaceValue = 0) {
+		for (int ii = INT_PLACE_1s; ii >= (INT_PLACE_1000s + 1); ii--, shortPlaceBase =
+			shortPlaceValue, shortPlaceValue = 0)
+		{
          for (int jj = 0; jj < 10; jj++, shortPlaceValue += shortPlaceBase) {
             SHORT_SUFFIX_PLACES[ii][jj] = shortPlaceValue;
          }
       }
    }
 
-   private final byte dataPartitionCount;
-   private final int nineDigitBatchAllocationSize;
-   private final ThreadLocal<AllocatedBatch<IInputMessage>> preAllocatedMessages;
    private final IReusableAllocator<IInputMessage> inputMessageAllocator;
+	private final short[][] suffixPartitionPlaces;
+	private final byte[] partitionCycles;
 
 
-   private static final class AllocatedBatch<T extends IReusable> {
-      private final IReusableAllocator<T> reusableAllocator;
-      private final ArrayList<T> currentAllocation;
-      private Iterator<T> currentIterator;
-
-      AllocatedBatch(final int allocationSize, final IReusableAllocator<T> reusableAllocator) {
-         this.reusableAllocator = reusableAllocator;
-			this.currentAllocation = new ArrayList<>(allocationSize);
-			this.currentIterator = this.currentAllocation.iterator();
-      }
-
-      public boolean isEmpty()
-      {
-			return !currentIterator.hasNext();
-      }
-
-      public void renewAllocation(
-         final int batchAllocationSize,
-         final IReusableAllocator<T> reusableAllocator)
-      {
-			this.currentAllocation.clear();
-			this.currentAllocation.ensureCapacity(batchAllocationSize);
-         reusableAllocator.allocateBatch(
-            batchAllocationSize, currentAllocation);
-         this.currentIterator = currentAllocation.iterator();
-      }
-
-      public T allocateNext()
-      {
-         final T retVal = currentIterator.next();
-
-			Verify.verifyNotNull(retVal, "Null allocation?");
-			Verify.verify(
-				retVal.getReferenceCount() == 1, 
-				"Reference count was %s, not 1, for %s",
-				retVal.getReferenceCount(), retVal);
-         // Verify.verify(retVal.getPrefix() == Integer.MIN_VALUE, "%s", retVal);
-
-         return retVal;
-      }
-   }
+	// private static final class AllocatedBatch<T extends IReusable> {
+	// private final IReusableAllocator<T> reusableAllocator;
+	// private final ArrayList<T> currentAllocation;
+	// private Iterator<T> currentIterator;
+	//
+	// AllocatedBatch(final int allocationSize, final IReusableAllocator<T> reusableAllocator) {
+	// this.reusableAllocator = reusableAllocator;
+	// this.currentAllocation = new ArrayList<>(allocationSize);
+	// this.currentIterator = this.currentAllocation.iterator();
+	// }
+	//
+	// public boolean isEmpty()
+	// {
+	// return !currentIterator.hasNext();
+	// }
+	//
+	// public void renewAllocation(
+	// final int batchAllocationSize,
+	// final IReusableAllocator<T> reusableAllocator)
+	// {
+	// this.currentAllocation.clear();
+	// this.currentAllocation.ensureCapacity(batchAllocationSize);
+	// reusableAllocator.allocateBatch(
+	// batchAllocationSize, currentAllocation);
+	// this.currentIterator = currentAllocation.iterator();
+	// }
+	//
+	// public T allocateNext()
+	// {
+	// final T retVal = currentIterator.next();
+	//
+	// Verify.verifyNotNull(retVal, "Null allocation?");
+	// Verify.verify(
+	// retVal.getReferenceCount() == 1,
+	// "Reference count was %s, not 1, for %s",
+	// retVal.getReferenceCount(), retVal);
+	// // Verify.verify(retVal.getPrefix() == Integer.MIN_VALUE, "%s", retVal);
+	//
+	// return retVal;
+	// }
+	// }
 
 
 
    public InputMessageCodec(
-      final byte dataPartitionCount,
-      final int nineDigitBatchAllocationSize,
-      final IReusableAllocator<IInputMessage> inputMessageAllocator )
+   	final byte dataPartitionCount,
+		final IReusableAllocator<IInputMessage> inputMessageAllocator )
    {
       super();
-      this.dataPartitionCount = dataPartitionCount;
-      this.nineDigitBatchAllocationSize = nineDigitBatchAllocationSize;
       this.inputMessageAllocator = inputMessageAllocator;
-      preAllocatedMessages =
-         new ThreadLocal<AllocatedBatch<IInputMessage>>() {
-            @Override
-            protected AllocatedBatch<IInputMessage> initialValue() {
-				return new AllocatedBatch<>(
-					nineDigitBatchAllocationSize, inputMessageAllocator);
-            }
-         };
+		this.suffixPartitionPlaces = new short[9][10];
+		for (int ii = INT_PLACE_1s; ii > INT_PLACE_1000s; ii--) {
+			for (int jj = 0; jj < 10; jj++) {
+				this.suffixPartitionPlaces[ii][jj] = (short) (SHORT_SUFFIX_PLACES[ii][jj] % dataPartitionCount);
+			}
+		}
+      
+		final int maxSuffixModSum = dataPartitionCount * 3;
+		this.partitionCycles = new byte[maxSuffixModSum];
+		for (int ii = 0, kk = 0; ii < 3; ii++) {
+			for (byte jj = 0; jj < dataPartitionCount; jj++, kk++) {
+				this.partitionCycles[kk] = jj;
+			}
+		}
    }
 
 
@@ -236,29 +238,28 @@ extends Codec<Buffer, IInputMessage, IInputMessage>
 
    IInputMessage ifNineDigitMessage(final byte[] msgBuf)
    {
-      final IInputMessage retVal;
+		final byte ones = (byte) (msgBuf[INT_PLACE_1s] - BYTE_0);
+		final byte tens = (byte) (msgBuf[INT_PLACE_10s] - BYTE_0);
+		final byte huns = (byte) (msgBuf[INT_PLACE_100s] - BYTE_0);
+      
+   	final short suffix = (short) (
+   		SHORT_SUFFIX_PLACES[INT_PLACE_1s][ones] +
+			SHORT_SUFFIX_PLACES[INT_PLACE_10s][tens] +
+			SHORT_SUFFIX_PLACES[INT_PLACE_100s][huns]);
 
-      final int prefix = parsePrefix(msgBuf);
-      if (prefix >= 0) {
-         final short suffix = parseSuffix(msgBuf);
-         if (suffix >= 0) {
-            retVal = allocateNextMessage();
-            retVal.setMessagePayload(
-               msgBuf, prefix, suffix, dataPartitionCount);
+		// Every thread in the input batch pool will examine this message, and only one will accept it. For this to work,
+		// the message must be retained long enough for every thread to have a chance to see it, not only the one that
+		// accepts it.  So increase the retention count to match the number of data partitions.  Each thread must then
+		// release it once whether it accepts it for further processing or not or realizes it belongs to a different
+		// partition and rejects it.
+		final byte partitionIndex =
+			this.partitionCycles[
+				this.suffixPartitionPlaces[INT_PLACE_1s][ones] +
+				this.suffixPartitionPlaces[INT_PLACE_10s][tens] +
+				this.suffixPartitionPlaces[INT_PLACE_100s][huns]];
 
-            // Every thread in the input batch pool will examine this message, and only one will accept it.  For this to work, the
-            // message must be retained long enough for every thread to have a chance to see it, not only the one that accepts it.
-            // So increase the retention count to match the number of data partitions.  Each thread must then release it once whether
-            // it accepts it for further processing or not or realizes it belongs to a different partition and rejects it.
-            // retVal.retain(requiredRetainIncrease);
-         } else {
-            retVal = null;
-         }
-      } else {
-         retVal = null;
-      }
-
-      return retVal;
+		return this.inputMessageAllocator.allocate()
+			.setMessagePayload(msgBuf, suffix, partitionIndex);
    }
 
 
@@ -267,16 +268,16 @@ extends Codec<Buffer, IInputMessage, IInputMessage>
     * new content if necessary.
     * @return
     */
-   IInputMessage allocateNextMessage()
-   {
-      final AllocatedBatch<IInputMessage> reservations =
-         preAllocatedMessages.get();
-      if (reservations.isEmpty()) {
-         reservations.renewAllocation(
-            nineDigitBatchAllocationSize, inputMessageAllocator);
-      }
-		return reservations.allocateNext();
-	}
+	// IInputMessage allocateNextMessage()
+	// {
+	// final AllocatedBatch<IInputMessage> reservations =
+	// preAllocatedMessages.get();
+	// if (reservations.isEmpty()) {
+	// reservations.renewAllocation(
+	// nineDigitBatchAllocationSize, inputMessageAllocator);
+	// }
+	// return reservations.allocateNext();
+	// }
 
 
 	/**
@@ -286,7 +287,7 @@ extends Codec<Buffer, IInputMessage, IInputMessage>
 	 * @param msgBuf
 	 * @return
 	 */
-   static int getIntFromBytes(final byte[] msgBuf)
+	public static int parseMessage(final byte[] msgBuf)
    {
       int retVal = 0;
       for( byte ii=8; ii>= 0; ii-- ) {
@@ -341,20 +342,33 @@ extends Codec<Buffer, IInputMessage, IInputMessage>
     * @param prefix
     * @return
     */
-   static short parseSuffix(final byte[] msgBuf)
+	public static short parseSuffix(final byte[] msgBuf)
    {
-      short retVal = 0;
-      for( byte ii=INT_PLACE_1s; ii>= 6; ii-- ) {
-         final byte nextByte = msgBuf[ii];
-         if ((nextByte < BYTE_0) || (nextByte > BYTE_9))
-            return Short.MIN_VALUE;
-         else {
-            retVal += SHORT_SUFFIX_PLACES[ii][nextByte - BYTE_0];
-         }
-      }
-
-      return retVal;
+   	return (short) (
+   		SHORT_SUFFIX_PLACES[INT_PLACE_1s][msgBuf[INT_PLACE_1s]] +
+			SHORT_SUFFIX_PLACES[INT_PLACE_10s][msgBuf[INT_PLACE_10s]] +
+			SHORT_SUFFIX_PLACES[INT_PLACE_100s][msgBuf[INT_PLACE_100s]]);
    }
+
+
+	/**
+	 * Given just the last three digits of a 9-digit sequence, return its decimal equivalent modulo the data partition
+	 * count.
+	 *
+	 * suffix[0] == fullMessage[6]
+	 * suffix[1] == fullMessage[7]
+	 * suffix[2] == fullMessage[8]
+	 *
+	 * @param prefix
+	 * @return
+	 */
+	byte parsePartitionIndex(final byte[] msgBuf)
+	{
+		return this.partitionCycles[
+			this.suffixPartitionPlaces[INT_PLACE_1s][msgBuf[INT_PLACE_1s]] +
+			this.suffixPartitionPlaces[INT_PLACE_10s][msgBuf[INT_PLACE_10s]] +
+			this.suffixPartitionPlaces[INT_PLACE_100s][msgBuf[INT_PLACE_100s]]];
+	}
 
 
    /**
