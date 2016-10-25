@@ -8,10 +8,16 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
 
 import org.reactivestreams.Processor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import com.google.common.base.Preconditions;
 
 import info.jchein.apps.nr.codetest.ingest.lifecycle.AbstractSegment;
 import info.jchein.apps.nr.codetest.ingest.messages.ICounterIncrements;
@@ -23,7 +29,10 @@ import info.jchein.apps.nr.codetest.ingest.reusable.IReusableAllocator;
 import reactor.bus.Event;
 import reactor.bus.EventBus;
 import reactor.fn.Function;
+import reactor.fn.timer.Timer;
 import reactor.rx.Stream;
+import reactor.rx.action.Control;
+import reactor.rx.action.support.TapAndControls;
 
 
 /**
@@ -39,26 +48,40 @@ implements IStatsProviderSupplier
 	private static final Logger LOG = LoggerFactory.getLogger(WriteOutputFileSegment.class);
 
 	private final File outputLogFile;
-	private final short concurrentFileWriters;
+	private final long reportIntervalInSeconds;
+
+	private final Timer ingestionTimer;
 	private final BatchInputSegment batchInputSegment;
 	private final Processor<IWriteFileBuffer, IWriteFileBuffer> writeOutputFileProcessor;
 	private final IReusableAllocator<ICounterIncrements> counterIncrementsAllocator;
+	private final CounterOverall cumulativeValues = new CounterOverall();
+
+	private final ReentrantLock shutdownLock = new ReentrantLock();
+   private final boolean[] seenOnComplete = {false, false};
+	private final Condition completed = shutdownLock.newCondition();
 
 	private FileOutputStream outputFileStream;
 	private Stream<ICounterIncrements> reportCounterIncrementsStream;
 
+	// private Control terminalContol;
+
 
 	public WriteOutputFileSegment( final String outputFilePath, final short concurrentFileWriters,
-		final EventBus eventBus, final BatchInputSegment batchInputSegment,
+		final long reportIntervalInSeconds, final EventBus eventBus, final Timer reportingTimer,
+		final BatchInputSegment batchInputSegment,
 		final Processor<IWriteFileBuffer, IWriteFileBuffer> writeOutputFileProcessor,
 		final IReusableAllocator<ICounterIncrements> counterIncrementsAllocator )
 	{
 		super(eventBus);
-		this.concurrentFileWriters = concurrentFileWriters;
+		this.reportIntervalInSeconds = reportIntervalInSeconds;
 		this.outputLogFile = new File(outputFilePath);
 		this.batchInputSegment = batchInputSegment;
+		this.ingestionTimer = reportingTimer;
 		this.writeOutputFileProcessor = writeOutputFileProcessor;
 		this.counterIncrementsAllocator = counterIncrementsAllocator;
+
+		Preconditions.checkArgument(
+			concurrentFileWriters == 1, "Only one concurrent writer is supported at this time.");
 	}
 
 
@@ -72,32 +95,123 @@ implements IStatsProviderSupplier
 	@Override
 	protected Function<Event<Long>, Boolean> doStart()
 	{
-		LOG.info("Output writer is opening output file");
+		LOG.info("Output writer opening output file");
 		openFile();
-		LOG.info("Output file is available for writing");
+		LOG.info("Output file available for writing");
 
-		if (concurrentFileWriters > 1) {
-			// final Stream<IWriteFileBuffer> partitionedStreamRoot =
-			// batchInputSegment.getLoadedWriteFileBufferStream()
-			// .process(writeOutputFileWorkProcessor);
-			//
-			// final ArrayList<Stream<ICounterIncrements>> partitions =
-			// new ArrayList<>(concurrentFileWriters);
-			// for (byte ii = 0; ii < concurrentFileWriters; ii++) {
-			// partitions.add(partitionedStreamRoot.map(writeBuffer -> processBatch(writeBuffer)));
-			// }
-			// reportCounterIncrementsStream = Streams.from(partitions);
-			throw new UnsupportedOperationException(
-				"Only one concurrent file writer is supported for now");
-		} else {
-			reportCounterIncrementsStream = batchInputSegment.getLoadedWriteFileBufferStream()
-				// .capacity(this.concurrentFileWriters)
+		final Control terminalControl = initFileWriterPartial();
+		LOG.info("Data collection is online");
+
+		return evt -> {
+			long nanosTimeout = evt.getData()
+				.longValue();
+
+			shutdownLock.lock();
+			try {
+				if (seenOnComplete[0] == false) {
+					terminalControl.cancel();
+				}
+				while (seenOnComplete[0] == false) {
+					try {
+						nanosTimeout = completed.awaitNanos(nanosTimeout);
+					}
+					catch (final InterruptedException e) {
+						LOG.error("Clean shutdown aborted by thread interruption!");
+						Thread.interrupted();
+						return Boolean.FALSE;
+					}
+				}
+
+				LOG.info("Write output file with counters segment acknowledges a clean shutdown");
+				return Boolean.TRUE;
+			}
+			finally {
+				shutdownLock.unlock();
+			}
+		};
+	}
+
+
+	private Control initFileWriterPartial()
+	{
+		this.reportCounterIncrementsStream =
+ this.batchInputSegment.getLoadedWriteFileBufferStream()
 				.process(this.writeOutputFileProcessor)
-				.map(writeBuffer -> processBatch(writeBuffer));
-			// .log("after write");
-		}
+			.map(writeBuffer -> processBatch(writeBuffer))
+			.observeError(Throwable.class, (v, e) -> {
+				final StringBuffer msg = new StringBuffer(1024);
 
-		return evt -> Boolean.TRUE;
+				int partitionNum = 0;
+				final Iterator<TapAndControls<IWriteFileBuffer>> tapIter =
+					this.batchInputSegment.getPartitionedTaps();
+				while (tapIter.hasNext()) {
+					msg.append("-- Last on partition index = ")
+						.append(partitionNum++)
+						.append(" was ")
+						.append(tapIter.next()
+							.get())
+						.append('\n');
+				}
+				LOG.error(
+					String.format(
+						"Tap scan on error triggered by %s: %s-- Exception: {}", v, msg.toString()),
+					e);
+			});
+
+		LOG.info("Console reporting interval is every {} seconds", Long.valueOf(reportIntervalInSeconds));
+
+		return this.reportCounterIncrementsStream.observeCancel(evt -> {
+				// Toggle the first seenOnComplete flag once input to the final window is recognized by
+				// observing a SHUTDOWN event being fed to the window boundary. Note that we are taking
+				// advantage observeCancel()'s bug that causes it to trigger on SHUTDOWN signals rather
+				// than CANCEL signals since there is no native observeShutdown() observer!
+				shutdownLock.lock();
+				try {
+					seenOnComplete[0] = true;
+					LOG.info(
+						"Performance stats segment receives an end of stream signal.  No additional data will follow.");
+				}
+				finally {
+					shutdownLock.unlock();
+				}
+			})
+			.window(this.reportIntervalInSeconds, TimeUnit.SECONDS, this.ingestionTimer)
+			.combine()
+			.consume(statStream -> {
+				// statStream.startWith(
+				// Streams.just(
+				// counterIncrementsAllocator.allocate()
+				// .setDeltas(0, 0))
+				// )
+				statStream.reduce(
+					counterIncrementsAllocator.allocate().setDeltas(0, 0),
+					(prevStat, nextStat) -> {
+						nextStat.beforeRead();
+						prevStat.incrementDeltas(nextStat);
+						nextStat.release();
+
+						return prevStat;
+					}
+				).consume(deltaSum -> {
+					// First argument to format aggregates the total unique counter and returns the duration
+					// since the last update. Remaining arguments are simple getters. If this is later
+					// rearranged, understand that initial call to incrementUniqueValues() establishes time
+					// duration for subsequent call to getTotalDuration() as well as total unique counter for
+					// subsequent call to getTotalUniques(). Call to incrementUniqueValues() must therefore
+					// precede either call to other two methods called out in this comment.
+					LOG.info(
+						String.format(
+							"During the last %d seconds, %d unique 9-digit inputs were logged and %d redundant inputs were discarded.\nSince service launch (%d seconds), %d unique 9-digit inputs have been logged.\n\n",
+							Long.valueOf(
+								TimeUnit.NANOSECONDS.toSeconds(
+									cumulativeValues.incrementUniqueValues(deltaSum.getDeltaUniques()))),
+							Integer.valueOf(deltaSum.getDeltaUniques()),
+							Integer.valueOf(deltaSum.getDeltaDuplicates()),
+							Long.valueOf(TimeUnit.NANOSECONDS.toSeconds(cumulativeValues.getTotalDuration())),
+							Integer.valueOf(cumulativeValues.getTotalUniques())));
+					deltaSum.release();
+				});
+			});
 	}
 
 
@@ -205,6 +319,7 @@ implements IStatsProviderSupplier
 		retVal.add(
 			new ResourceStatsAdapter(
 				"Output File Writers' RingBufferProcessor", this.writeOutputFileProcessor));
+
 		return retVal;
 	}
 }

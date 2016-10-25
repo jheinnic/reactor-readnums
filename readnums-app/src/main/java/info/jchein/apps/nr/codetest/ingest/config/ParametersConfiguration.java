@@ -58,10 +58,11 @@ public class ParametersConfiguration
    @Value("5")
    public int maxConcurrentSockets;
 
-	@Value("32768")
+	// @Value("32768")
+	@Value("16777216")
    public int socketReceiveBufferBytes;
 
-   @Value("1500")
+	@Value("1250")
    public int socketTimeoutMilliseconds;
 
 	// @Value("2048")
@@ -70,11 +71,14 @@ public class ParametersConfiguration
 	// @Value("4000000")
 	// public int peakMsgsPerSecondExpected;
 
+	@Value("8192")
+	public int socketHandoffRingBufferSize;
+
    /*==========================+
     | Input Segment Parameters |
     +==========================*/
 
-	@Value("32")
+	@Value("4096")
    public int fanOutRingBufferSize;
 
    @Value("4")
@@ -86,20 +90,20 @@ public class ParametersConfiguration
 	@Value("800")
 	public short flushOverflowTolerance;
 
-   @Value("3000")
+	@Value("1250")
    public long flushEveryInterval;
 
    @Value("MILLISECONDS")
    public TimeUnit flushEveryTimeUnits;
 
 	@Value("128")
-   public int batchTimerWheelSize;
+   public int ingestionTimerWheelSize;
 
-	@Value("750")
-   public int batchTimerResolutionMillis;
+	@Value("1250")
+   public int ingestionTimerResolutionMillis;
 
-   @Value("SLEEP")
-   public TimerWaitKind batchTimerWaitKind;
+	@Value("YIELD")
+   public TimerWaitKind ingestionTimerWaitKind;
 
 	@Value("131072")
    public int peakExpectedInputsInFlight;
@@ -116,7 +120,7 @@ public class ParametersConfiguration
     | Log Writer Segment Parameters |
     +===============================*/
 
-	@Value("32")
+	@Value("128")
    public int writeOutputRingBufferSize;
 
    // @Value("#{systemProperties.myProp}:numbers.log")
@@ -134,18 +138,18 @@ public class ParametersConfiguration
     | Performance Tracking Segment Parameters |
     +=========================================*/
 
-	@Value("128")
-   public int reportTimerWheelSize;
+	// @Value("128")
+	// public int reportTimerWheelSize;
 
-	@Value("1250")
-   public int reportTimerResolutionMillis;
+	// @Value("1250")
+	// public int reportTimerResolutionMillis;
 
-   @Value("SLEEP")
-   public TimerWaitKind reportTimerWaitKind;
+	// @Value("SLEEP")
+	// public TimerWaitKind reportTimerWaitKind;
 
    @Value("10")
    public int reportIntervalSeconds;
 
-	@Value("32")
+	@Value("64")
    public int perfCounterRingBufferSize;
 }

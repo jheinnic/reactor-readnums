@@ -1,19 +1,15 @@
 package info.jchein.apps.nr.codetest.ingest.segments.tcpserver;
 
-import static info.jchein.apps.nr.codetest.ingest.messages.IInputMessage.MessageKind.INVALID_INPUT;
-import static info.jchein.apps.nr.codetest.ingest.messages.IInputMessage.MessageKind.TERMINATE_CMD;
-
 import info.jchein.apps.nr.codetest.ingest.config.Constants;
-import info.jchein.apps.nr.codetest.ingest.messages.IInputMessage;
-import info.jchein.apps.nr.codetest.ingest.messages.InputMessage;
-import info.jchein.apps.nr.codetest.ingest.reusable.IReusableAllocator;
+import info.jchein.apps.nr.codetest.ingest.messages.MessageInput;
 import reactor.fn.Consumer;
 import reactor.fn.Function;
 import reactor.io.buffer.Buffer;
 import reactor.io.codec.Codec;
 
+
 public final class InputMessageCodec
-extends Codec<Buffer, IInputMessage, IInputMessage>
+extends Codec<Buffer, MessageInput, MessageInput>
 {
    // private static final Logger LOG = LoggerFactory.getLogger(InputMessageCodec.class);
 
@@ -21,53 +17,84 @@ extends Codec<Buffer, IInputMessage, IInputMessage>
    private static final Buffer EMPTY_BUFFER = Buffer.wrap(new byte[0]);
 
    private static final byte BYTE_0 = 48;
-   private static final byte BYTE_9 = 57;
+	// private static final byte BYTE_9 = 57;
    private static final byte BYTE_NL = 13;
 
-   private static final byte INT_PLACE_1s = 8;
-	private static final byte INT_PLACE_10s = 7;
-	private static final byte INT_PLACE_100s = 6;
-   private static final byte INT_PLACE_1000s = 5;
-   // private static final byte INT_PLACE_10000s = 4;
-   // private static final byte INT_PLACE_100000s = 3;
-   // private static final byte INT_PLACE_1000000s = 2;
-   // private static final byte INT_PLACE_10000000s = 1;
-   // private static final byte INT_PLACE_100000000s = 0;
+	private static final byte INT_MSGBUF_1s = 8;
+	private static final byte INT_MSGBUF_10s = 7;
+	private static final byte INT_MSGBUF_100s = 6;
+	private static final byte INT_MSGBUF_1000s = 5;
+	private static final byte INT_MSGBUF_10000s = 4;
+	private static final byte INT_MSGBUF_100000s = 3;
+	private static final byte INT_MSGBUF_1000000s = 2;
+	private static final byte INT_MSGBUF_10000000s = 1;
+	private static final byte INT_MSGBUF_100000000s = 0;
 
-   // private static final byte SHORT_PLACE_1s = 2;
-   // private static final byte SHORT_PLACE_10s = 1;
-   // private static final byte SHORT_PLACE_100s = 0;
-   // private static final byte SHORT_PLACE_1000s = 0;
+	private static final byte INT_MESSAGE_1s = 8;
+	private static final byte INT_MESSAGE_10s = 7;
+	private static final byte INT_MESSAGE_100s = 6;
+	private static final byte INT_MESSAGE_1000s = 5;
+	private static final byte INT_MESSAGE_10000s = 4;
+	private static final byte INT_MESSAGE_100000s = 3;
+	private static final byte INT_MESSAGE_1000000s = 2;
+	private static final byte INT_MESSAGE_10000000s = 1;
+	private static final byte INT_MESSAGE_100000000s = 0;
+
+	private static final byte INT_PREFIX_1s = 5;
+	private static final byte INT_PREFIX_10s = 4;
+	private static final byte INT_PREFIX_100s = 3;
+	private static final byte INT_PREFIX_1000s = 2;
+	private static final byte INT_PREFIX_10000s = 1;
+	private static final byte INT_PREFIX_100000s = 0;
+
+	private static final byte INT_SUFFIX_1s = 2;
+	private static final byte INT_SUFFIX_10s = 1;
+	private static final byte INT_SUFFIX_100s = 0;
+
+	private static final byte SHORT_SUFFIX_1s = 2;
+	private static final byte SHORT_SUFFIX_10s = 1;
+	private static final byte SHORT_SUFFIX_100s = 0;
+	// private static final byte SHORT_SUFFIX_1000s = 0;
 
    // Eliminate the need for multiplication when mapping a nine digit byte sequence to an integer by indexing partial
    // sums from a static finally created table generated once on class loading MessageUtils.
-	private static final int[][] INT_DECIMAL_PLACES = new int[9][10];
+	private static final int[][] INT_MESSAGE_PLACES = new int[9][10];
+
+	// Indices for prefix/suffix extraction to an int value
 	private static final int[][] INT_PREFIX_PLACES = new int[6][10];
+	private static final int[][] INT_SUFFIX_PLACES = new int[3][10];
 
 	// To avoid converting indices 6, 7, and 8 to 0, 1, and 2, this array makes a tradeoff
 	// by allocating unused data cells for first-dimension indices 0 through 5.
-	private static final short[][] SHORT_SUFFIX_PLACES = new short[9][10];
+	private static final short[][] SHORT_SUFFIX_PLACES = new short[3][10];
 
 
 	static {
       int intPlaceBase = 1;
       int intPlaceValue = 0;
-      for (int ii = INT_PLACE_1s; ii >= 0; ii--, intPlaceBase = intPlaceValue, intPlaceValue = 0) {
+		for (int ii = INT_MESSAGE_1s; ii >= 0; ii--, intPlaceBase = intPlaceValue, intPlaceValue = 0) {
          for (int jj = 0; jj < 10; jj++, intPlaceValue += intPlaceBase) {
-            INT_DECIMAL_PLACES[ii][jj] = intPlaceValue;
+            INT_MESSAGE_PLACES[ii][jj] = intPlaceValue;
          }
       }
 
-      INT_PREFIX_PLACES[0] = INT_DECIMAL_PLACES[3];
-      INT_PREFIX_PLACES[1] = INT_DECIMAL_PLACES[4];
-      INT_PREFIX_PLACES[2] = INT_DECIMAL_PLACES[5];
-      INT_PREFIX_PLACES[3] = INT_DECIMAL_PLACES[6];
-      INT_PREFIX_PLACES[4] = INT_DECIMAL_PLACES[7];
-      INT_PREFIX_PLACES[5] = INT_DECIMAL_PLACES[8];
+		INT_PREFIX_PLACES[INT_PREFIX_100000s] = INT_MESSAGE_PLACES[INT_MESSAGE_100000s];
+		INT_PREFIX_PLACES[INT_PREFIX_10000s] = INT_MESSAGE_PLACES[INT_MESSAGE_10000s];
+		INT_PREFIX_PLACES[INT_PREFIX_1000s] = INT_MESSAGE_PLACES[INT_MESSAGE_1000s];
+		INT_PREFIX_PLACES[INT_PREFIX_100s] = INT_MESSAGE_PLACES[INT_MESSAGE_100s];
+		INT_PREFIX_PLACES[INT_PREFIX_10s] = INT_MESSAGE_PLACES[INT_MESSAGE_10s];
+		INT_PREFIX_PLACES[INT_PREFIX_1s] = INT_MESSAGE_PLACES[INT_MESSAGE_1s];
 
+		INT_SUFFIX_PLACES[INT_SUFFIX_100s] = INT_MESSAGE_PLACES[INT_MESSAGE_100s];
+		INT_SUFFIX_PLACES[INT_SUFFIX_10s] = INT_MESSAGE_PLACES[INT_MESSAGE_10s];
+		INT_SUFFIX_PLACES[INT_SUFFIX_1s] = INT_MESSAGE_PLACES[INT_MESSAGE_1s];
+
+		// Rather than copy, recalculate the short values. The reduced value range makes
+		// copying from source arrays a challenge not worth resolving to save O(n^2) for
+		// n === 3 during one time initialization.
       short shortPlaceBase = 1;
       short shortPlaceValue = 0;
-		for (int ii = INT_PLACE_1s; ii >= (INT_PLACE_1000s + 1); ii--, shortPlaceBase =
+		for (int ii = SHORT_SUFFIX_1s; ii >= SHORT_SUFFIX_100s; ii--, shortPlaceBase =
 			shortPlaceValue, shortPlaceValue = 0)
 		{
          for (int jj = 0; jj < 10; jj++, shortPlaceValue += shortPlaceBase) {
@@ -76,7 +103,6 @@ extends Codec<Buffer, IInputMessage, IInputMessage>
       }
    }
 
-   private final IReusableAllocator<IInputMessage> inputMessageAllocator;
 	private final short[][] suffixPartitionPlaces;
 	private final byte[] partitionCycles;
 
@@ -125,14 +151,10 @@ extends Codec<Buffer, IInputMessage, IInputMessage>
 
 
 
-   public InputMessageCodec(
-   	final byte dataPartitionCount,
-		final IReusableAllocator<IInputMessage> inputMessageAllocator )
-   {
+	public InputMessageCodec(final byte dataPartitionCount) {
       super();
-      this.inputMessageAllocator = inputMessageAllocator;
-		this.suffixPartitionPlaces = new short[9][10];
-		for (int ii = INT_PLACE_1s; ii > INT_PLACE_1000s; ii--) {
+		this.suffixPartitionPlaces = new short[3][10];
+		for (int ii = SHORT_SUFFIX_1s; ii >= SHORT_SUFFIX_100s; ii--) {
 			for (int jj = 0; jj < 10; jj++) {
 				this.suffixPartitionPlaces[ii][jj] = (short) (SHORT_SUFFIX_PLACES[ii][jj] % dataPartitionCount);
 			}
@@ -149,11 +171,11 @@ extends Codec<Buffer, IInputMessage, IInputMessage>
 
 
    @Override
-   public Function<Buffer,IInputMessage> decoder(final Consumer<IInputMessage> next)
+   public Function<Buffer,MessageInput> decoder(final Consumer<MessageInput> next)
    {
       final byte[] bytes9 = new byte[Constants.VALID_MESSAGE_SIZE];
       final byte[] bytes10 = new byte[Constants.WIN_ALT_VALID_MESSAGE_SIZE];
-      final Function<Buffer, IInputMessage> retFn;
+      final Function<Buffer, MessageInput> retFn;
 
       // The two variants below differ only by whether they invoke next.accept() or not with their calculated result.
       // It's a lot to repeat, but it spares us an redundant if(next == null) check inside the returned function and
@@ -165,67 +187,43 @@ extends Codec<Buffer, IInputMessage, IInputMessage>
      if (next == null) {
          retFn = (final Buffer b) -> {
             final int bytesRemaining = b.remaining();
-            IInputMessage candidate;
 
             // LOG.info("Decoding {}", b);
             // First eliminate message size overflow or underflow.
             if (bytesRemaining < Constants.VALID_MESSAGE_SIZE)
-               return getInputMessageUnderflow();
+               return getMessageInputUnderflow();
             else if (bytesRemaining == Constants.WIN_ALT_VALID_MESSAGE_SIZE) {
                b.read(bytes10);
                if (bytes10[Constants.VALID_MESSAGE_SIZE] != BYTE_NL)
-                  return getInputMessageOverflow();
-               else if ((candidate = isTerminateMsg(bytes10)) != null)
-                  return candidate;
-               else {
-                  if ((candidate = ifNineDigitMessage(bytes10)) != null) return candidate;
-                  else
-                     return getInputMessageInvalidContent();
-               }
+                  return getMessageInputOverflow();
+					else 
+						return identifyBuffer(bytes10);
             } else if (bytesRemaining > Constants.VALID_MESSAGE_SIZE)
-               return getInputMessageOverflow();
+               return getMessageInputOverflow();
             else {
                b.read(bytes9);
-               if ((candidate = isTerminateMsg(bytes9)) != null)
-                  return candidate;
-               else {
-                  if ((candidate = ifNineDigitMessage(bytes9)) != null) return candidate;
-                  else
-                     return getInputMessageInvalidContent();
-               }
+					return identifyBuffer(bytes9);
             }
          };
       } else {
          retFn = (final Buffer b) -> {
             final int bytesRemaining = b.remaining();
-            IInputMessage candidate;
 
             // LOG.info("Decoding {}", b);
             // First eliminate message size overflow or underflow.
             if (bytesRemaining < Constants.VALID_MESSAGE_SIZE) {
-               next.accept(getInputMessageUnderflow());
+               next.accept(getMessageInputUnderflow());
             } else if (bytesRemaining == Constants.WIN_ALT_VALID_MESSAGE_SIZE) {
                b.read(bytes10);
-               if (bytes10[Constants.VALID_MESSAGE_SIZE] != BYTE_NL) {
-                  next.accept(getInputMessageOverflow());
-               } else if ((candidate = isTerminateMsg(bytes10)) != null) {
-                  next.accept(candidate);
-               } else if ((candidate = ifNineDigitMessage(bytes10)) != null) {
-                  next.accept(candidate);
-               } else {
-                  next.accept(getInputMessageInvalidContent());
-               }
-            } else if (bytesRemaining > Constants.VALID_MESSAGE_SIZE) {
-               next.accept(getInputMessageOverflow());
-            } else {
+					if (bytes10[Constants.VALID_MESSAGE_SIZE] != BYTE_NL)
+						next.accept(getMessageInputOverflow());
+					else 
+						next.accept(identifyBuffer(bytes10));
+				} else if (bytesRemaining > Constants.VALID_MESSAGE_SIZE)
+					next.accept(getMessageInputOverflow());
+				else {
                b.read(bytes9);
-               if ((candidate = isTerminateMsg(bytes9)) != null) {
-                  next.accept(candidate);
-               } else if ((candidate = ifNineDigitMessage(bytes9)) != null) {
-                  next.accept(candidate);
-               } else {
-                  next.accept(getInputMessageInvalidContent());
-               }
+					next.accept(identifyBuffer(bytes9));
             }
 
             return null;
@@ -236,16 +234,29 @@ extends Codec<Buffer, IInputMessage, IInputMessage>
    }
 
 
-   IInputMessage ifNineDigitMessage(final byte[] msgBuf)
+	private MessageInput identifyBuffer(final byte[] bytes9)
+	{
+		MessageInput candidate;
+		candidate =
+			((candidate = isTerminateMsg(bytes9)) != null)
+				? candidate
+				: ((candidate = ifNineDigitMessage(bytes9)) != null)
+					? candidate
+					: getMessageInputInvalidContent();
+		return candidate;
+	}
+
+
+   MessageInput ifNineDigitMessage(final byte[] msgBuf)
    {
-		final byte ones = (byte) (msgBuf[INT_PLACE_1s] - BYTE_0);
-		final byte tens = (byte) (msgBuf[INT_PLACE_10s] - BYTE_0);
-		final byte huns = (byte) (msgBuf[INT_PLACE_100s] - BYTE_0);
+		final byte ones = (byte) (msgBuf[INT_MSGBUF_1s] - BYTE_0);
+		final byte tens = (byte) (msgBuf[INT_MSGBUF_10s] - BYTE_0);
+		final byte huns = (byte) (msgBuf[INT_MSGBUF_100s] - BYTE_0);
       
    	final short suffix = (short) (
-   		SHORT_SUFFIX_PLACES[INT_PLACE_1s][ones] +
-			SHORT_SUFFIX_PLACES[INT_PLACE_10s][tens] +
-			SHORT_SUFFIX_PLACES[INT_PLACE_100s][huns]);
+   		SHORT_SUFFIX_PLACES[SHORT_SUFFIX_1s][ones] +
+			SHORT_SUFFIX_PLACES[SHORT_SUFFIX_10s][tens] +
+			SHORT_SUFFIX_PLACES[SHORT_SUFFIX_100s][huns]);
 
 		// Every thread in the input batch pool will examine this message, and only one will accept it. For this to work,
 		// the message must be retained long enough for every thread to have a chance to see it, not only the one that
@@ -254,12 +265,15 @@ extends Codec<Buffer, IInputMessage, IInputMessage>
 		// partition and rejects it.
 		final byte partitionIndex =
 			this.partitionCycles[
-				this.suffixPartitionPlaces[INT_PLACE_1s][ones] +
-				this.suffixPartitionPlaces[INT_PLACE_10s][tens] +
-				this.suffixPartitionPlaces[INT_PLACE_100s][huns]];
+			   this.suffixPartitionPlaces[SHORT_SUFFIX_1s][ones] +
+				this.suffixPartitionPlaces[SHORT_SUFFIX_10s][tens] +
+				this.suffixPartitionPlaces[SHORT_SUFFIX_100s][huns]];
 
-		return this.inputMessageAllocator.allocate()
-			.setMessagePayload(msgBuf, suffix, partitionIndex);
+		return MessageInput.builder()
+			.messageBytes(msgBuf)
+			.suffix(suffix)
+			.partitionIndex(partitionIndex)
+			.build();
    }
 
 
@@ -268,13 +282,13 @@ extends Codec<Buffer, IInputMessage, IInputMessage>
     * new content if necessary.
     * @return
     */
-	// IInputMessage allocateNextMessage()
+	// MessageInput allocateNextMessage()
 	// {
-	// final AllocatedBatch<IInputMessage> reservations =
+	// final AllocatedBatch<MessageInput> reservations =
 	// preAllocatedMessages.get();
 	// if (reservations.isEmpty()) {
 	// reservations.renewAllocation(
-	// nineDigitBatchAllocationSize, inputMessageAllocator);
+	// nineDigitBatchAllocationSize, MessageInputAllocator);
 	// }
 	// return reservations.allocateNext();
 	// }
@@ -288,19 +302,28 @@ extends Codec<Buffer, IInputMessage, IInputMessage>
 	 * @return
 	 */
 	public static int parseMessage(final byte[] msgBuf)
-   {
-      int retVal = 0;
-      for( byte ii=8; ii>= 0; ii-- ) {
-         final byte nextByte = msgBuf[ii];
-         if ((nextByte < BYTE_0) || (nextByte > BYTE_9))
-            return Integer.MIN_VALUE;
-         else {
-            retVal += INT_DECIMAL_PLACES[ii][nextByte - BYTE_0];
-         }
-      }
-
-      return retVal;
-   }
+	{
+		return 
+			INT_MESSAGE_PLACES[INT_MESSAGE_1s][msgBuf[INT_MSGBUF_1s] - BYTE_0] +
+			INT_MESSAGE_PLACES[INT_MESSAGE_10s][msgBuf[INT_MSGBUF_10s] - BYTE_0] +
+			INT_MESSAGE_PLACES[INT_MESSAGE_100s][msgBuf[INT_MSGBUF_100s] - BYTE_0] +
+			INT_MESSAGE_PLACES[INT_MESSAGE_1000s][msgBuf[INT_MSGBUF_1000s] - BYTE_0] +
+			INT_MESSAGE_PLACES[INT_MESSAGE_10000s][msgBuf[INT_MSGBUF_10000s] - BYTE_0] +
+			INT_MESSAGE_PLACES[INT_MESSAGE_100000s][msgBuf[INT_MSGBUF_100000s] - BYTE_0] +
+			INT_MESSAGE_PLACES[INT_MESSAGE_1000000s][msgBuf[INT_MSGBUF_1000000s] - BYTE_0] +
+			INT_MESSAGE_PLACES[INT_MESSAGE_10000000s][msgBuf[INT_MSGBUF_10000000s] - BYTE_0] +
+			INT_MESSAGE_PLACES[INT_MESSAGE_100000000s][msgBuf[INT_MSGBUF_100000000s] - BYTE_0];
+//		int retVal = 0;
+//		for (byte ii = 8; ii >= 0; ii--) {
+//			final byte nextByte = msgBuf[ii];
+//			if ((nextByte < BYTE_0) || (nextByte > BYTE_9)) return Integer.MIN_VALUE;
+//			else {
+//				retVal += INT_MESSAGE_PLACES[ii][nextByte - BYTE_0];
+//			}
+//		}
+//
+//		return retVal;
+	}
 
 
    /**
@@ -318,19 +341,15 @@ extends Codec<Buffer, IInputMessage, IInputMessage>
     */
    public static int parsePrefix(final byte[] msgBuf)
    {
-      // Similar to parseIntValue, but uses an array that has been shifted over by 3 places to
-      // essentially divide by 1000 while decoding.
-      int retVal = 0;
-      for( byte ii=INT_PLACE_1000s; ii>= 0; ii-- ) {
-         final byte nextByte = msgBuf[ii];
-         if ((nextByte < BYTE_0) || (nextByte > BYTE_9))
-            return Integer.MIN_VALUE;
-         else {
-            retVal += INT_PREFIX_PLACES[ii][nextByte - BYTE_0];
-         }
-      }
-
-      return retVal;
+		// Similar to parseMessage, but uses an array that has been shifted over by 3 places to
+		// essentially divide by 1000 while decoding.
+		return 
+			INT_PREFIX_PLACES[INT_PREFIX_1s][msgBuf[INT_MSGBUF_1000s] - BYTE_0] +
+			INT_PREFIX_PLACES[INT_PREFIX_10s][msgBuf[INT_MSGBUF_10000s] - BYTE_0] +
+			INT_PREFIX_PLACES[INT_PREFIX_100s][msgBuf[INT_MSGBUF_100000s] - BYTE_0] +
+			INT_PREFIX_PLACES[INT_PREFIX_1000s][msgBuf[INT_MSGBUF_1000000s] - BYTE_0] +
+			INT_PREFIX_PLACES[INT_PREFIX_10000s][msgBuf[INT_MSGBUF_10000000s] - BYTE_0] +
+			INT_PREFIX_PLACES[INT_PREFIX_100000s][msgBuf[INT_MSGBUF_100000000s] - BYTE_0];
    }
 
 
@@ -345,9 +364,9 @@ extends Codec<Buffer, IInputMessage, IInputMessage>
 	public static short parseSuffix(final byte[] msgBuf)
    {
    	return (short) (
-   		SHORT_SUFFIX_PLACES[INT_PLACE_1s][msgBuf[INT_PLACE_1s]] +
-			SHORT_SUFFIX_PLACES[INT_PLACE_10s][msgBuf[INT_PLACE_10s]] +
-			SHORT_SUFFIX_PLACES[INT_PLACE_100s][msgBuf[INT_PLACE_100s]]);
+   		SHORT_SUFFIX_PLACES[SHORT_SUFFIX_1s][msgBuf[INT_MSGBUF_1s] - BYTE_0] +
+			SHORT_SUFFIX_PLACES[SHORT_SUFFIX_10s][msgBuf[INT_MSGBUF_10s] - BYTE_0] +
+			SHORT_SUFFIX_PLACES[SHORT_SUFFIX_100s][msgBuf[INT_MSGBUF_100s] - BYTE_0]);
    }
 
 
@@ -365,9 +384,9 @@ extends Codec<Buffer, IInputMessage, IInputMessage>
 	byte parsePartitionIndex(final byte[] msgBuf)
 	{
 		return this.partitionCycles[
-			this.suffixPartitionPlaces[INT_PLACE_1s][msgBuf[INT_PLACE_1s]] +
-			this.suffixPartitionPlaces[INT_PLACE_10s][msgBuf[INT_PLACE_10s]] +
-			this.suffixPartitionPlaces[INT_PLACE_100s][msgBuf[INT_PLACE_100s]]];
+		   this.suffixPartitionPlaces[SHORT_SUFFIX_1s][msgBuf[INT_MSGBUF_1s] - BYTE_0] +
+			this.suffixPartitionPlaces[SHORT_SUFFIX_10s][msgBuf[INT_MSGBUF_10s] - BYTE_0] +
+			this.suffixPartitionPlaces[SHORT_SUFFIX_100s][msgBuf[INT_MSGBUF_100s] - BYTE_0]];
 	}
 
 
@@ -379,7 +398,7 @@ extends Codec<Buffer, IInputMessage, IInputMessage>
     *           A valid 9-byte message array (or 10-byte with trailing newline on Windows)
     * @return true if msgBuf contains 'terminate', false otherwise.
     */
-   public static IInputMessage isTerminateMsg(final byte[] msgBuf)
+   public static MessageInput isTerminateMsg(final byte[] msgBuf)
    {
       for (int ii=Constants.VALID_MESSAGE_SIZE-1; ii>=0; ii--) {
          if (TERMINATE[ii] != msgBuf[ii]) return null;
@@ -391,31 +410,31 @@ extends Codec<Buffer, IInputMessage, IInputMessage>
    // Only 9-digit messages are dynamically allocated because they are the only ones that truly need to be stateful.
    // Invalid Error Codes and the Terminate Command are carried by pre-fabricated Flyweight objects not associated with
    // an active {@link ReusableObjectAllocator}, and therefore non-Recyclable.
-   private static final IInputMessage TERMINATE_FLYWEIGHT = new InputMessage(TERMINATE_CMD);
-   private static final IInputMessage INVALID_UNDERFLOW = new InputMessage(INVALID_INPUT);
-   private static final IInputMessage INVALID_OVERFLOW = new InputMessage(INVALID_INPUT);
-   private static final IInputMessage INVALID_CONTENT = new InputMessage(INVALID_INPUT);
+	private static final MessageInput TERMINATE_FLYWEIGHT = MessageInput.terminate();
+	private static final MessageInput INVALID_UNDERFLOW = MessageInput.invalidInput();
+	private static final MessageInput INVALID_OVERFLOW = MessageInput.invalidInput();
+	private static final MessageInput INVALID_CONTENT = MessageInput.invalidInput();
 
-   static IInputMessage getInputMessageUnderflow()
+   static MessageInput getMessageInputUnderflow()
    {
       return INVALID_UNDERFLOW;
    }
 
 
-   static IInputMessage getInputMessageOverflow()
+   static MessageInput getMessageInputOverflow()
    {
       return INVALID_OVERFLOW;
    }
 
 
-   static IInputMessage getInputMessageInvalidContent()
+   static MessageInput getMessageInputInvalidContent()
    {
       return INVALID_CONTENT;
    }
 
 
    @Override
-   public Buffer apply(final IInputMessage t)
+   public Buffer apply(final MessageInput t)
    {
       return EMPTY_BUFFER;
    }

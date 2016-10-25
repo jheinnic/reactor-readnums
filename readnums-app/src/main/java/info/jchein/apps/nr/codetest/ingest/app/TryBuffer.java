@@ -16,9 +16,9 @@ import org.slf4j.LoggerFactory;
 
 import info.jchein.apps.nr.codetest.ingest.messages.CounterIncrements;
 import info.jchein.apps.nr.codetest.ingest.messages.ICounterIncrements;
-import info.jchein.apps.nr.codetest.ingest.messages.IInputMessage;
 import info.jchein.apps.nr.codetest.ingest.messages.IWriteFileBuffer;
-import info.jchein.apps.nr.codetest.ingest.messages.InputMessage;
+import info.jchein.apps.nr.codetest.ingest.messages.MessageInput;
+import info.jchein.apps.nr.codetest.ingest.messages.MessageInput;
 import info.jchein.apps.nr.codetest.ingest.messages.WriteFileBuffer;
 import info.jchein.apps.nr.codetest.ingest.reusable.IReusableAllocator;
 import info.jchein.apps.nr.codetest.ingest.reusable.ReusableObjectAllocator;
@@ -45,7 +45,6 @@ import reactor.io.net.impl.netty.tcp.NettyTcpServer;
 import reactor.io.net.tcp.TcpServer;
 import reactor.rx.Stream;
 import reactor.rx.Streams;
-import reactor.rx.action.Control;
 import reactor.rx.broadcast.Broadcaster;
 import reactor.rx.subscription.PushSubscription;
 
@@ -66,22 +65,19 @@ public class TryBuffer
             err.printStackTrace();
          });
 
-      final ReusableObjectAllocator<IInputMessage, InputMessage> msgAlloc =
-			new ReusableObjectAllocator<>(2048, null);
-
 		final ReusableObjectAllocator<IWriteFileBuffer, WriteFileBuffer> writeBufAlloc =
 			new ReusableObjectAllocator<>(4096, null);
 
 		final ReusableObjectAllocator<ICounterIncrements, CounterIncrements> counterAlloc =
 			new ReusableObjectAllocator<>(2048, null);
 
-      final Codec<Buffer, IInputMessage, IInputMessage> msgCodec =
+      final Codec<Buffer, MessageInput, MessageInput> msgCodec =
 			new DelimitedCodec<>(
-				true, new InputMessageCodec(numDataPartitions, msgAlloc));
+				true, new InputMessageCodec(numDataPartitions));
 
-      final TcpServer<IInputMessage, IInputMessage> tcpServer =
-         NetStreams.<IInputMessage,
-         IInputMessage> tcpServer(
+      final TcpServer<MessageInput, MessageInput> tcpServer =
+         NetStreams.<MessageInput,
+         MessageInput> tcpServer(
             NettyTcpServer.class,
             aSpec -> {
                return aSpec.env(
@@ -92,7 +88,7 @@ public class TryBuffer
             }
          );
 
-      final Broadcaster<Stream<IInputMessage>> streamsToMerge =
+      final Broadcaster<Stream<MessageInput>> streamsToMerge =
          Broadcaster.create(reactorEnv, SynchronousDispatcher.INSTANCE);
 
       final IUniqueMessageTrie uniqueTrie = new UniqueMessageTrie();
@@ -131,54 +127,44 @@ public class TryBuffer
       @SuppressWarnings("unchecked")
       final Stream<IWriteFileBuffer> computeStream =
          streamsToMerge.startWith(
-            Streams.<IInputMessage>never())
-         .<IInputMessage> merge()
+            Streams.<MessageInput>never())
+         .<MessageInput> merge()
          .groupBy(evt -> Byte.valueOf(evt.getPartitionIndex()))
 //         .retry( t -> {
 //            LOG.error("Retrying from channel handler stream after ", t);
 //            return true;
 //         })
          .<IWriteFileBuffer> flatMap(partitionStream -> {
-            final byte partitionIndex =
-               partitionStream.key()
-               .byteValue();
+            final byte partitionIndex = partitionStream.key().byteValue();
 
-            return
-            partitionStream
-            .process((Processor<IInputMessage, IInputMessage>) fanOutProcessors[partitionIndex])
-            .window(3072, 6000, TimeUnit.MILLISECONDS, workTimer)
-            .<IWriteFileBuffer> flatMap( nestedWindow -> {
-               return
-               nestedWindow
-               .reduce(
-                  writeBufAlloc.allocate(),
-                  (final IWriteFileBuffer batch, final IInputMessage msg) -> {
-                     msg.beforeRead();
-                     if (uniqueTrie.isUnique(msg.getPrefix(), msg.getSuffix())) {
-                        batch.acceptUniqueInput(msg.getMessageBytes());
-                        msg.release();
-                     } else {
-                        msg.release();
-								// Duplicate tracking really requires an intermediate stage to
-								// accumulate counters.
-								batch.trackSkippedDuplicates(1);
-                     }
-
-                     return batch;
-                  }
-               )
-               .observe(writeBuf -> writeBuf.afterWrite());
-//               .log("Reduced");
-            });
-         });
+            return partitionStream.process((Processor<MessageInput, MessageInput>) fanOutProcessors[partitionIndex])
+	            .window(3072, 6000, TimeUnit.MILLISECONDS, workTimer)
+	            .<IWriteFileBuffer> flatMap( nestedWindow -> {
+						return nestedWindow.reduce(
+	                  writeBufAlloc.allocate(),
+	                  (final IWriteFileBuffer batch, final MessageInput msg) -> {
+							if (uniqueTrie.isUnique(
+								InputMessageCodec.parsePrefix(msg.getMessageBytes()), msg.getSuffix()))
+					{
+	                        batch.acceptUniqueInput(msg.getMessageBytes());
+	                     } else {
+									// Duplicate tracking really requires an intermediate stage to
+									// accumulate counters.
+									batch.trackSkippedDuplicates(1);
+	                     }
+	
+	                     return batch;
+	                  }
+	               ).map(writeBuf -> writeBuf.afterWrite());
 //         .retry( t -> {
 //            LOG.error("Retrying from compute stream after ", t);
 //            return true;
 //         });
+	            });
+				});
 
          final Stream<ICounterIncrements> writeResultStream =
-            computeStream
-            .process(writeOutputProcessor)
+            computeStream.process(writeOutputProcessor)
             .map(writeBuf -> {
 				// writeBuf.beforeRead();
                final ICounterIncrements countIncr =
@@ -194,44 +180,44 @@ public class TryBuffer
 
          	// TODO: This is outdated logic.  See production impl for a better code path.
             writeResultStream.process(counterIncrementsProcessor)
-            .mergeWith(Streams.period(counterTimer, 1)
-               .map(evt -> counterAlloc.allocate()
-                  .setDeltas(0, 0)))
-            .window(5, TimeUnit.SECONDS, counterTimer)
-            .flatMap(statStream -> {
-               return statStream.reduce(
-                  counterAlloc.allocate(),
-                  (final ICounterIncrements prevStat, final ICounterIncrements nextStat) -> {
-                     nextStat.beforeRead();
-                     nextStat.incrementDeltas(prevStat);
-                     prevStat.release();
-                     return nextStat;
-               });
-            })
-            .retry( t -> {
-               LOG.error("Retrying from counter incrementing processor stream after ", t);
-               return true;
-            })
-            .consume(evt -> {
-               final int deltaUniques = evt.getDeltaUniques();
-               final int deltaDuplicates = evt.getDeltaDuplicates();
-               evt.release();
-
-               final long currentNanos = System.nanoTime();
-               LOG.info(
-                  "Over the past {} seconds, we accepted {} records and rejected {} duplicates.",
-                  new Object[] {
-                     Long.valueOf(
-                        TimeUnit.NANOSECONDS.toSeconds(currentNanos - lastUpdateNanos[0])),
-                     Integer.valueOf(deltaUniques), Integer.valueOf(deltaDuplicates) }
-               );
-               lastUpdateNanos[0] = currentNanos;
-            });
+	            .mergeWith(Streams.period(counterTimer, 1)
+	               .map(evt -> counterAlloc.allocate()
+	                  .setDeltas(0, 0)))
+	            .window(5, TimeUnit.SECONDS, counterTimer)
+	            .flatMap(statStream -> {
+	               return statStream.reduce(
+	                  counterAlloc.allocate(),
+	                  (final ICounterIncrements prevStat, final ICounterIncrements nextStat) -> {
+	                     nextStat.beforeRead();
+	                     nextStat.incrementDeltas(prevStat);
+	                     prevStat.release();
+	                     return nextStat;
+	               });
+	            })
+	            .retry( t -> {
+	               LOG.error("Retrying from counter incrementing processor stream after ", t);
+	               return true;
+	            })
+	            .consume(evt -> {
+	               final int deltaUniques = evt.getDeltaUniques();
+	               final int deltaDuplicates = evt.getDeltaDuplicates();
+	               evt.release();
+	
+	               final long currentNanos = System.nanoTime();
+	               LOG.info(
+	                  "Over the past {} seconds, we accepted {} records and rejected {} duplicates.",
+	                  new Object[] {
+	                     Long.valueOf(
+	                        TimeUnit.NANOSECONDS.toSeconds(currentNanos - lastUpdateNanos[0])),
+	                     Integer.valueOf(deltaUniques), Integer.valueOf(deltaDuplicates) }
+	               );
+	               lastUpdateNanos[0] = currentNanos;
+	            });
 
       tcpServer.start(channelStream -> {
          LOG.info("In connection handler");
 
-         final ChannelStream<IInputMessage,IInputMessage> theChannelStream = channelStream;
+         final ChannelStream<MessageInput,MessageInput> theChannelStream = channelStream;
 
          streamsToMerge.onNext(
             theChannelStream.filter( evt -> {
@@ -254,7 +240,7 @@ public class TryBuffer
          );
 
          LOG.info("Addressing write stream and returning...");
-         final Stream<IInputMessage> noData = Streams.empty();
+         final Stream<MessageInput> noData = Streams.empty();
          noData.consume();
          return channelStream.writeWith(noData);
       });
@@ -266,7 +252,6 @@ public class TryBuffer
          }
       }
    }
-
 
    private static void closeChannel(final ChannelStream<?, ?> channelStream)
    {

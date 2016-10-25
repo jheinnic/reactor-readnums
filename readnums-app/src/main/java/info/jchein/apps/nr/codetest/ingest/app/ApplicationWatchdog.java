@@ -13,7 +13,7 @@ import org.springframework.context.annotation.Scope;
 
 import info.jchein.apps.nr.codetest.ingest.app.console.IConsole;
 import info.jchein.apps.nr.codetest.ingest.config.Constants;
-import info.jchein.apps.nr.codetest.ingest.messages.IInputMessage;
+import info.jchein.apps.nr.codetest.ingest.messages.MessageInput;
 import reactor.fn.Consumer;
 import reactor.io.buffer.Buffer;
 import reactor.io.codec.Codec;
@@ -48,7 +48,7 @@ implements SmartLifecycle
 
    public ApplicationWatchdog(
       @NotNull IConsole console,
-      @NotNull Codec<Buffer, IInputMessage, IInputMessage> codec,
+      @NotNull Codec<Buffer, MessageInput, MessageInput> codec,
       @NotNull Broadcaster<?> broadcaster,
       @NotNull ConfigurableApplicationContext appCtxt
    ) {
@@ -101,7 +101,7 @@ implements SmartLifecycle
    @Override
    public int getPhase()
    {
-      return 999;
+		return 5000;
    }
 
 

@@ -4,6 +4,9 @@ package info.jchein.apps.nr.codetest.ingest.messages;
 import java.nio.ByteBuffer;
 import java.util.concurrent.atomic.AtomicLong;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import info.jchein.apps.nr.codetest.ingest.config.Constants;
 import info.jchein.apps.nr.codetest.ingest.reusable.AbstractReusableObject;
 import info.jchein.apps.nr.codetest.ingest.reusable.OnReturnCallback;
@@ -13,6 +16,8 @@ public class WriteFileBuffer
 extends AbstractReusableObject<IWriteFileBuffer, WriteFileBuffer>
 implements IWriteFileBuffer
 {
+	static final Logger LOG = LoggerFactory.getLogger(WriteFileBuffer.class);
+
 	private final ByteBuffer writeBuffer;
 	private final AtomicLong nextWriteFileOffset;
 	private boolean isBufferFilling;
@@ -87,26 +92,12 @@ implements IWriteFileBuffer
 		return (writeBuffer.capacity() - writeBuffer.remaining()) / Constants.FILE_ENTRY_SIZE;
 	}
 
-
-	// @Override
-	// public int getByteCapacity()
-	// {
-	// return writeBuffer.capacity();
-	// }
-	//
-	//
-	// @Override
-	// public int getByteCapacityRemaining()
-	// {
-	// return writeBuffer.remaining();
-	// }
-
 	@Override
 	public WriteFileBuffer afterWrite()
 	{
-		fileWriteOffset = nextWriteFileOffset.getAndAdd(entryCount * Constants.FILE_ENTRY_SIZE);
-		isBufferFilling = false;
+		this.isBufferFilling = false;
 		super.afterWrite();
+		// LOG.info("After write file buffer after write: {}", this);
 		return this;
 	}
 
@@ -115,9 +106,11 @@ implements IWriteFileBuffer
 	public ByteBuffer getByteBufferToFlush()
 	{
 		// Must ensure read visibility before checking the flag that dictates whether or not the
-		// buffer has had all content loaded into it and is ready to be flipped for reading.
+		// buffer has had all content loaded into it and is ready to flip for reading.
+		// LOG.info("Before read file buffer: {}", this);
 		super.beforeRead();
 		assert(!isBufferFilling);
+		this.fileWriteOffset = this.nextWriteFileOffset.get();
 		return (ByteBuffer) writeBuffer.flip();
 	}
 
@@ -139,11 +132,12 @@ implements IWriteFileBuffer
 	@Override
 	public void recycle()
 	{
-		writeBuffer.clear();
-		isBufferFilling = true;
-		fileWriteOffset = -1;
-		entryCount = 0;
-		skipCount = 0;
+		this.nextWriteFileOffset.getAndAdd(this.entryCount * Constants.FILE_ENTRY_SIZE);
+		this.writeBuffer.clear();
+		this.isBufferFilling = true;
+		this.fileWriteOffset = -1;
+		this.entryCount = 0;
+		this.skipCount = 0;
 	}
 
 

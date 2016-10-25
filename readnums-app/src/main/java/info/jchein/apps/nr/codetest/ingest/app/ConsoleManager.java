@@ -7,7 +7,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 
 import info.jchein.apps.nr.codetest.ingest.app.console.IConsole;
 import info.jchein.apps.nr.codetest.ingest.config.Constants;
-import info.jchein.apps.nr.codetest.ingest.messages.IInputMessage;
+import info.jchein.apps.nr.codetest.ingest.messages.MessageInput;
 import reactor.fn.Consumer;
 import reactor.io.buffer.Buffer;
 import reactor.io.codec.Codec;
@@ -19,7 +19,7 @@ implements Runnable
    private final IConsole console;
 
    @NotNull
-   private final Codec<Buffer, IInputMessage, IInputMessage> codec;
+	private final Codec<Buffer, MessageInput, MessageInput> codec;
 
    @NotNull
 	private final Subscriber<?> inputBroadcaster;
@@ -30,7 +30,7 @@ implements Runnable
    
    ConsoleManager(
       @NotNull IConsole console,
-      @NotNull Codec<Buffer,IInputMessage,IInputMessage> codec,
+      @NotNull Codec<Buffer,MessageInput,MessageInput> codec,
 		@NotNull Subscriber<?> inputBroadcaster,
       @NotNull @Qualifier(Constants.TERMINATE_INGEST_APPLICATION) Consumer<Void> terminateAppConsumer
    ) {
@@ -48,7 +48,7 @@ implements Runnable
       while (quitting == false) {
          final String input = 
             console.readLine("Ingestion application is running.  To exit, type 'terminate' and then <ENTER>");
-         final IInputMessage msg = 
+         final MessageInput msg = 
             codec.decoder().apply(Buffer.wrap(input));
 
          switch (msg.getKind()) {

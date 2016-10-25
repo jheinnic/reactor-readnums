@@ -25,15 +25,15 @@ public class EventConfiguration
    ParametersConfiguration paramsConfig;
 
 
-   @Bean
-   @Scope("singleton")
-   public IReusableAllocator<IInputMessage> inputMessageAllocator()
-   {
-		// return new InputMessageAllocator(2 * parametersConfiguration.peakExpectedInputsInFlight, false);
-		return new ReusableObjectAllocator<IInputMessage, InputMessage>(
-			2 * paramsConfig.peakExpectedInputsInFlight,
-			(callback, index) -> new InputMessage(callback, index));
-   }
+	// @Bean
+	// @Scope("singleton")
+	// public IReusableAllocator<MessageInput> MessageInputAllocator()
+	// {
+	// // return new MessageInputAllocator(2 * parametersConfiguration.peakExpectedInputsInFlight, false);
+	// return new ReusableObjectAllocator<MessageInput, MessageInput>(
+	// 2 * paramsConfig.peakExpectedInputsInFlight,
+	// (callback, index) -> new MessageInput(callback, index));
+	// }
 
 
 	// @Bean

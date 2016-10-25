@@ -1,6 +1,6 @@
 package info.jchein.apps.nr.codetest.ingest.segments.tcpserver;
 
-import info.jchein.apps.nr.codetest.ingest.messages.IInputMessage;
+import info.jchein.apps.nr.codetest.ingest.messages.MessageInput;
 
 import java.util.Map;
 
@@ -10,7 +10,7 @@ import com.google.common.collect.ImmutableMap;
 
 class SocketRegistry
 {
-   final ImmutableMap<ChannelStream<IInputMessage, IInputMessage>, ChannelStreamController<IInputMessage>> openSocketContexts;
+   final ImmutableMap<ChannelStream<MessageInput, MessageInput>, ChannelStreamController<MessageInput>> openSocketContexts;
    final int socketsAvailable;
 
 
@@ -18,14 +18,14 @@ class SocketRegistry
    {
       super();
       this.openSocketContexts =
-         ImmutableMap.<ChannelStream<IInputMessage, IInputMessage>, ChannelStreamController<IInputMessage>> builder()
+         ImmutableMap.<ChannelStream<MessageInput, MessageInput>, ChannelStreamController<MessageInput>> builder()
          .build();
       this.socketsAvailable = maxConcurrentSockets;
    }
 
 
    private SocketRegistry(
-      final ImmutableMap<ChannelStream<IInputMessage, IInputMessage>, ChannelStreamController<IInputMessage>> openSocketContexts,
+      final ImmutableMap<ChannelStream<MessageInput, MessageInput>, ChannelStreamController<MessageInput>> openSocketContexts,
       final int socketsAvailable )
    {
       super();
@@ -35,7 +35,7 @@ class SocketRegistry
 
 
    SocketRegistry allocateNextConnectionFor(
-      final ChannelStream<IInputMessage, IInputMessage> channelStream, ChannelStreamController<IInputMessage> controller)
+      final ChannelStream<MessageInput, MessageInput> channelStream, ChannelStreamController<MessageInput> controller)
    {
       if (this.socketsAvailable <= 0) {
          return null;
@@ -43,8 +43,8 @@ class SocketRegistry
 
       final int nextSocketIdx = this.socketsAvailable - 1;
 
-      final ImmutableMap.Builder<ChannelStream<IInputMessage, IInputMessage>, ChannelStreamController<IInputMessage>> mapBuilder =
-         ImmutableMap.<ChannelStream<IInputMessage, IInputMessage>, ChannelStreamController<IInputMessage>> builder();
+      final ImmutableMap.Builder<ChannelStream<MessageInput, MessageInput>, ChannelStreamController<MessageInput>> mapBuilder =
+         ImmutableMap.<ChannelStream<MessageInput, MessageInput>, ChannelStreamController<MessageInput>> builder();
 
       // Construct a new connection map, starting with a clone of the outgoing map, then adding an entry for
       // the newly-reserved socket.
@@ -55,17 +55,17 @@ class SocketRegistry
    }
 
 
-   SocketRegistry releaseConnectionFor(ChannelStream<IInputMessage, IInputMessage> channelStream)
+   SocketRegistry releaseConnectionFor(ChannelStream<MessageInput, MessageInput> channelStream)
    {
       final int nextSocketIdx = this.socketsAvailable + 1;
 
       // Allocate builders for the next objects to build.
-      final ImmutableMap.Builder<ChannelStream<IInputMessage, IInputMessage>, ChannelStreamController<IInputMessage>> mapBuilder =
-         ImmutableMap.<ChannelStream<IInputMessage, IInputMessage>, ChannelStreamController<IInputMessage>> builder();
+      final ImmutableMap.Builder<ChannelStream<MessageInput, MessageInput>, ChannelStreamController<MessageInput>> mapBuilder =
+         ImmutableMap.<ChannelStream<MessageInput, MessageInput>, ChannelStreamController<MessageInput>> builder();
 
       // Construct a new connection map. Iterate over the outgoing map and include any entry with a non-matching
       // socket hook as key.
-      for (Map.Entry<ChannelStream<IInputMessage, IInputMessage>, ChannelStreamController<IInputMessage>> nextEntry : this.openSocketContexts.entrySet()) {
+      for (Map.Entry<ChannelStream<MessageInput, MessageInput>, ChannelStreamController<MessageInput>> nextEntry : this.openSocketContexts.entrySet()) {
          if (nextEntry.getKey() != channelStream) {
             mapBuilder.put(nextEntry.getKey(), nextEntry.getValue());
          }
@@ -81,10 +81,10 @@ class SocketRegistry
    }
 
 
-   ChannelStreamController<IInputMessage> lookupResourceAdapter(
-      final ChannelStream<IInputMessage, IInputMessage> channelStream)
+   ChannelStreamController<MessageInput> lookupResourceAdapter(
+      final ChannelStream<MessageInput, MessageInput> channelStream)
    {
-      final ChannelStreamController<IInputMessage> retVal =
+      final ChannelStreamController<MessageInput> retVal =
          this.openSocketContexts.get(channelStream);
       if (retVal == null) {
          throw new NoSuchConnectionException(channelStream);

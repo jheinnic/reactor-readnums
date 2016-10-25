@@ -7,7 +7,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import info.jchein.apps.nr.codetest.ingest.lifecycle.AbstractSegment;
-import info.jchein.apps.nr.codetest.ingest.messages.IInputMessage;
+import info.jchein.apps.nr.codetest.ingest.messages.MessageInput;
 import reactor.Environment;
 import reactor.bus.Event;
 import reactor.bus.EventBus;
@@ -26,7 +26,7 @@ extends AbstractSegment
    private static final Logger LOG = LoggerFactory.getLogger(ServerSegment.class);
 
    private final ConnectionHandler connectionHandler;
-   private final TcpServer<IInputMessage,IInputMessage> tcpServer;
+   private final TcpServer<MessageInput,MessageInput> tcpServer;
 
    public ServerSegment(
       final String bindHost,
@@ -37,12 +37,12 @@ extends AbstractSegment
       final EventBus eventBus,
       final Environment environment,
       final ConnectionHandler connectionHandler,
-      final Codec<Buffer, IInputMessage, IInputMessage> codec )
+      final Codec<Buffer, MessageInput, MessageInput> codec )
    {
       super(eventBus);
 
       this.connectionHandler = connectionHandler;
-      tcpServer = NetStreams.<IInputMessage,IInputMessage> tcpServer(
+      tcpServer = NetStreams.<MessageInput,MessageInput> tcpServer(
          NettyTcpServer.class,
          aSpec -> {
             return aSpec.env(environment)
@@ -54,12 +54,12 @@ extends AbstractSegment
                .rcvbuf(socketReceiveBufferSize)
                .backlog(maxConcurrentSockets)
                .timeout(socketTimeoutMillis)
-					.prefetch(Long.MAX_VALUE) // 10)
+					.prefetch(0)// Long.MAX_VALUE) // 10)
 					.tcpNoDelay(false)
 					.keepAlive(true)
 					.reuseAddr(true)
 					.sndbuf(1024)
-					.linger(5)
+					.linger(30)
             )
             .listen(bindHost, bindPort);
          });

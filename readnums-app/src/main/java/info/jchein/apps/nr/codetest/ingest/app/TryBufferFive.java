@@ -16,10 +16,9 @@ import org.slf4j.LoggerFactory;
 
 import info.jchein.apps.nr.codetest.ingest.messages.CounterIncrements;
 import info.jchein.apps.nr.codetest.ingest.messages.ICounterIncrements;
-import info.jchein.apps.nr.codetest.ingest.messages.IInputMessage;
 import info.jchein.apps.nr.codetest.ingest.messages.IRawInputBatch;
 import info.jchein.apps.nr.codetest.ingest.messages.IWriteFileBuffer;
-import info.jchein.apps.nr.codetest.ingest.messages.InputMessage;
+import info.jchein.apps.nr.codetest.ingest.messages.MessageInput;
 import info.jchein.apps.nr.codetest.ingest.messages.RawInputBatch;
 import info.jchein.apps.nr.codetest.ingest.messages.WriteFileBuffer;
 import info.jchein.apps.nr.codetest.ingest.reusable.IReusableAllocator;
@@ -67,8 +66,8 @@ public class TryBufferFive
 				LOG.error("Envrionment was asked to route unhandled exception: ", err);
 			});
 
-		final ReusableObjectAllocator<IInputMessage, InputMessage> msgAlloc =
-			new ReusableObjectAllocator<>(2048, null);
+		// final ReusableObjectAllocator<MessageInput, MessageInput> msgAlloc =
+		// new ReusableObjectAllocator<>(2048, null);
 
 		final ReusableObjectAllocator<IRawInputBatch, RawInputBatch> batchAlloc =
 			new ReusableObjectAllocator<>(1024, null);
@@ -80,13 +79,12 @@ public class TryBufferFive
 			new ReusableObjectAllocator<>(2048, null);
 
 
-      final Codec<Buffer, IInputMessage, IInputMessage> msgCodec =
-			new DelimitedCodec<>(
-            true, new InputMessageCodec(numDataPartitions, msgAlloc));
+      final Codec<Buffer, MessageInput, MessageInput> msgCodec =
+			new DelimitedCodec<>(true, new InputMessageCodec(numDataPartitions));
 
-      final TcpServer<IInputMessage, IInputMessage> tcpServer =
-         NetStreams.<IInputMessage,
-         IInputMessage> tcpServer(
+      final TcpServer<MessageInput, MessageInput> tcpServer =
+         NetStreams.<MessageInput,
+         MessageInput> tcpServer(
             NettyTcpServer.class,
             aSpec -> {
                return aSpec
@@ -99,7 +97,7 @@ public class TryBufferFive
             }
          );
 
-      final Broadcaster<Stream<IInputMessage>> streamsToMerge =
+      final Broadcaster<Stream<MessageInput>> streamsToMerge =
          Broadcaster.create(reactorEnv, SynchronousDispatcher.INSTANCE);
 
       final IUniqueMessageTrie uniqueTrie = new UniqueMessageTrie();
@@ -141,8 +139,8 @@ public class TryBufferFive
 
       final Stream<IRawInputBatch> computeStream =
          streamsToMerge.startWith(
-            Streams.<IInputMessage>never())
-         .<IInputMessage> merge()
+            Streams.<MessageInput>never())
+         .<MessageInput> merge()
          .groupBy(evt -> Byte.valueOf(evt.getPartitionIndex()))
          .retry( t -> {
             LOG.error("Retrying from channel handler stream after ", t);
@@ -153,7 +151,7 @@ public class TryBufferFive
                partitionStream.key().byteValue();
 
             return partitionStream.process(
-            	(Processor<IInputMessage, IInputMessage>) fanOutProcessors[partitionIndex])
+            	(Processor<MessageInput, MessageInput>) fanOutProcessors[partitionIndex])
 //                  .log("rawInputFromProcessor")
             .window(64, 6000, TimeUnit.MILLISECONDS, workTimer)
             .<IRawInputBatch> flatMap( nestedWindow -> {
@@ -162,14 +160,13 @@ public class TryBufferFive
 //                     .log("rawInputInWindow")
                .reduce(
                   batchAlloc.allocate(),
-                  (final IRawInputBatch batch, final IInputMessage msg) -> {
-                     msg.beforeRead();
-                     final int prefix = msg.getPrefix();
+                  (final IRawInputBatch batch, final MessageInput msg) -> {
+							// final int prefix = msg.getPrefix();
+							final int prefix = InputMessageCodec.parsePrefix(msg.getMessageBytes());
                      final short suffix = msg.getSuffix();
-							final int message = InputMessageCodec.parseMessage(msg.getMessageBytes());
-                     msg.release();
 
                      if (uniqueTrie.isUnique(prefix, suffix)) {
+								final int message = InputMessageCodec.parseMessage(msg.getMessageBytes());
                         batch.acceptUniqueInput(message);
                      } else {
                         batch.trackSkippedDuplicate();
@@ -272,7 +269,7 @@ public class TryBufferFive
       tcpServer.start(channelStream -> {
          LOG.info("In connection handler");
 
-         final ChannelStream<IInputMessage,IInputMessage> theChannelStream = channelStream;
+         final ChannelStream<MessageInput,MessageInput> theChannelStream = channelStream;
 
          streamsToMerge.onNext(
             theChannelStream.filter( evt -> {
@@ -295,7 +292,7 @@ public class TryBufferFive
          );
 
          LOG.info("Addressing write stream and returning...");
-         final Stream<IInputMessage> noData = Streams.empty();
+         final Stream<MessageInput> noData = Streams.empty();
          noData.consume();
          return channelStream.writeWith(noData);
       });

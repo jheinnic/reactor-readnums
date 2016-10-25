@@ -2,30 +2,37 @@ package info.jchein.apps.nr.codetest.ingest.segments.logunique;
 
 
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.concurrent.TimeUnit;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import info.jchein.apps.nr.codetest.ingest.lifecycle.AbstractSegment;
-import info.jchein.apps.nr.codetest.ingest.messages.IInputMessage;
 import info.jchein.apps.nr.codetest.ingest.messages.IWriteFileBuffer;
+import info.jchein.apps.nr.codetest.ingest.messages.MessageInput;
 import info.jchein.apps.nr.codetest.ingest.perfdata.IStatsProvider;
 import info.jchein.apps.nr.codetest.ingest.perfdata.IStatsProviderSupplier;
 import info.jchein.apps.nr.codetest.ingest.perfdata.ResourceStatsAdapter;
 import info.jchein.apps.nr.codetest.ingest.reusable.IReusableAllocator;
+import info.jchein.apps.nr.codetest.ingest.segments.tcpserver.InputMessageCodec;
 import reactor.bus.Event;
 import reactor.bus.EventBus;
-import reactor.core.Dispatcher;
 import reactor.fn.Function;
 import reactor.fn.timer.Timer;
 import reactor.rx.Stream;
 import reactor.rx.Streams;
+import reactor.rx.action.Control;
+import reactor.rx.action.support.TapAndControls;
 import reactor.rx.broadcast.Broadcaster;
+import reactor.rx.stream.GroupedStream;
 
 
 public class BatchInputSegment
 extends AbstractSegment
 implements IStatsProviderSupplier
 {
-	// private static final Logger LOG = LoggerFactory.getLogger(BatchInputSegment.class);
+	static final Logger LOG = LoggerFactory.getLogger(BatchInputSegment.class);
 
 	private final short ioCount;
 	private final long ioPeriod;
@@ -34,10 +41,9 @@ implements IStatsProviderSupplier
 	private final IUniqueMessageTrie uniqueTest;
 
 	private final Timer ingestionTimer;
-	private final Dispatcher handoffDispatcher;
 
-	private final Broadcaster<Stream<IInputMessage>> streamsToMerge;
-	private final ArrayList<Broadcaster<IInputMessage>> fanOutBroadcasters;
+	private final Broadcaster<Stream<MessageInput>> streamsToMerge;
+	private final ArrayList<Broadcaster<MessageInput>> fanOutBroadcasters;
 	private final IReusableAllocator<IWriteFileBuffer> writeFileBufferAllocator;
 
 	private Stream<IWriteFileBuffer> loadedWriteFileBufferStream;
@@ -48,10 +54,9 @@ implements IStatsProviderSupplier
 	public BatchInputSegment( final short ioCount, final long ioPeriod, final TimeUnit ioTimeUnit,
 		final byte numDataPartitions, final EventBus eventBus, final Timer ingestionTimer,
 		final IUniqueMessageTrie uniqueTest,
-		final Broadcaster<Stream<IInputMessage>> streamsToMerge,
+		final Broadcaster<Stream<MessageInput>> streamsToMerge,
 		final IReusableAllocator<IWriteFileBuffer> writeFileBufferAllocator,
-		final Dispatcher handoffDispatcher,
-		final ArrayList<Broadcaster<IInputMessage>> fanOutBroadcasters )
+		final ArrayList<Broadcaster<MessageInput>> fanOutBroadcasters )
 	{
 		super(eventBus);
 		this.ioCount = ioCount;
@@ -62,7 +67,6 @@ implements IStatsProviderSupplier
 		this.streamsToMerge = streamsToMerge;
 		this.numDataPartitions = numDataPartitions;
 		this.fanOutBroadcasters = fanOutBroadcasters;
-		this.handoffDispatcher = handoffDispatcher;
 		this.writeFileBufferAllocator = writeFileBufferAllocator;
 
 		this.streamTerminals = new ArrayList<>(this.numDataPartitions);
@@ -85,69 +89,121 @@ implements IStatsProviderSupplier
 		// -- A Stream of:
 		// -- Streams per TCP Channel of:
 		// -- Streams, each keyed by a Data Partition index and made of:
-		// -- InputMessages from the same Data Partition index
+		// -- MessageInputs from the same Data Partition index
 		// First flatten out each TCP Channel's stream to yield:
 		// -- A Stream of
 		// -- Streams, each keyed by a Data Partition index and made of:
-		// -- InputMessages from the same Data Partition index
+		// -- MessageInputs from the same Data Partition index
 		// Dispatch each of the nested streams to a worker dedicated to the stream's
 		// associated data partition index. Do all remaining work on that thread.
-		// -- Flatten down to a data partitioned Stream of InputMessages
+		// -- Flatten down to a data partitioned Stream of MessageInputs
 		// -- Apply filtering test for uniqueness
 		// -- Load a merged write buffer and counters
 		// -- Dispatch to the I/O thread
 
 		for (int ii = 0; ii < this.numDataPartitions; ii++) {
 			final int partitionIndex = ii;
-			final Broadcaster<IInputMessage> nextBcast = this.fanOutBroadcasters.get(ii);
+			final Broadcaster<MessageInput> nextBcast = this.fanOutBroadcasters.get(ii);
 			
-			streamTerminals.add(nextBcast.filter(inputMsg -> {
-				inputMsg.beforeRead();
-				if (this.uniqueTest.isUnique(inputMsg.getPrefix(), inputMsg.getSuffix())) {
-					return true;
-				} else {
-					skipCounters[partitionIndex] += 1;
-					return false;
-				}
-			})
-				.buffer(this.ioCount, this.ioPeriod, this.ioTimeUnit, this.ingestionTimer)
-				.map(messageList -> {
-					IWriteFileBuffer retVal = this.writeFileBufferAllocator.allocate();
-					for (IInputMessage nextMsg : messageList) {
-						retVal.acceptUniqueInput(nextMsg.getMessageBytes());
+			this.streamTerminals.add(
+				nextBcast.filter(inputMsg -> {
+					if (this.uniqueTest.isUnique(
+						InputMessageCodec.parsePrefix(inputMsg.getMessageBytes()), inputMsg.getSuffix()))
+					{
+						return true;
+					} else {
+						skipCounters[partitionIndex] += 1;
+						return false;
 					}
-					retVal.trackSkippedDuplicates(skipCounters[partitionIndex]);
-					skipCounters[partitionIndex] = 0;
-
-					retVal.afterWrite();
-					return retVal;
-				}));
+				}).buffer(
+					this.ioCount, this.ioPeriod, this.ioTimeUnit, this.ingestionTimer
+				).map(messageList -> {
+						IWriteFileBuffer retVal = this.writeFileBufferAllocator.allocate();
+						for (MessageInput nextMsg : messageList) {
+							retVal.acceptUniqueInput(nextMsg.getMessageBytes());
+						}
+						retVal.trackSkippedDuplicates(skipCounters[partitionIndex]);
+						skipCounters[partitionIndex] = 0;
+	
+						retVal.afterWrite();
+						return retVal;
+				}).combine()
+			);
 		}
 
-		this.streamsToMerge.<IInputMessage> merge()
-			// .capacity(this.ioCount)
-			.window(this.ioCount, this.ioPeriod, this.ioTimeUnit, this.ingestionTimer)
-			.consumeOn(this.handoffDispatcher, batchedStream -> {
-				batchedStream.groupBy(
-					inputMsg -> Integer.valueOf(inputMsg.getPartitionIndex())
-				).consumeOn(this.handoffDispatcher, groupedStream -> {
-					final Broadcaster<IInputMessage> groupBroadcaster = 
-						this.fanOutBroadcasters.get(groupedStream.key());
-					groupedStream.consumeOn(this.handoffDispatcher, inputMsg -> {
-						groupBroadcaster.onNext(inputMsg);
-					});
-				});
+		Stream<MessageInput> merge = this.streamsToMerge.<MessageInput> merge();
+		Stream<GroupedStream<Integer, MessageInput>> groupBy =
+			merge.groupBy(inputMsg -> Integer.valueOf(inputMsg.getPartitionIndex()));
+		Stream<GroupedStream<Integer, MessageInput>> groupByCombined = groupBy.combine();
+
+		final Control terminalControl = groupByCombined.consume(groupedStream -> {
+			final Broadcaster<MessageInput> groupBroadcaster = 
+				this.fanOutBroadcasters.get(groupedStream.key());
+			
+			LOG.info(
+				"Pre-batch, post-group nested stream dispatched by {} of {} with a capacity of {}",
+				groupedStream.getDispatcher()
+					.toString(),
+				groupedStream.getDispatcher()
+					.backlogSize(),
+				groupedStream.getCapacity());
+
+			LOG.info(
+				"Parallel broadcast stream dispatched by {} of {} with a capacity of {}",
+				groupBroadcaster.getDispatcher()
+					.toString(),
+				groupBroadcaster.getDispatcher()
+					.backlogSize(),
+				groupBroadcaster.getCapacity());
+
+			groupedStream.log("What thread am I?")
+				.consume(inputMsg -> {
+				groupBroadcaster.onNext(inputMsg);
 			});
+		});
 
-		this.loadedWriteFileBufferStream = Streams.merge(streamTerminals);
+		LOG.info(
+			"Post-merge outer stream dispatched by {} of {} with a capacity of {}",
+			merge.getDispatcher()
+				.toString(),
+			merge.getDispatcher()
+				.backlogSize(),
+			merge.getCapacity());
+		LOG.info(
+			"Post-groupBy outer stream dispatched by {} of {} with a capacity of {}",
+			groupBy.getDispatcher()
+				.toString(),
+			groupBy.getDispatcher()
+				.backlogSize(),
+			groupBy.getCapacity());
+		LOG.info(
+			"Combined outer stream dispatched by {} of {} with a capacity of {}",
+			groupByCombined.getDispatcher()
+				.toString(),
+			groupByCombined.getDispatcher()
+				.backlogSize(),
+			groupByCombined.getCapacity());
 
-		return evt -> Boolean.TRUE;
+		this.loadedWriteFileBufferStream = Streams.merge(this.streamTerminals);
+
+		return evt -> {
+			terminalControl.cancel();
+			return Boolean.TRUE;
+		};
 	}
 
 
 	public Stream<IWriteFileBuffer> getLoadedWriteFileBufferStream()
 	{
-		return loadedWriteFileBufferStream;
+		return this.loadedWriteFileBufferStream;
+	}
+
+
+	public Iterator<TapAndControls<IWriteFileBuffer>> getPartitionedTaps()
+	{
+		return this.streamTerminals.stream()
+			.map(stream -> stream.tap())
+			.iterator();
 	}
 
 
@@ -162,9 +218,6 @@ implements IStatsProviderSupplier
 					"Partitioned Input RingBufferProcessor-" + ii,
 					this.fanOutBroadcasters.get(ii).getDispatcher()));
 		}
-		retVal.add(
-			new ResourceStatsAdapter(
-				"Handoff RingBufferProcessor", this.handoffDispatcher));
 
 		return retVal;
 	}
