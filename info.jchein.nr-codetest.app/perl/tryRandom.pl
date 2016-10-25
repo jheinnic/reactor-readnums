@@ -22,22 +22,29 @@ print "TCP Connection Success.\n";
 $msgCount = 0;
 $nextClock = time() + 30;
 $thisLineCount = 0;
-$nextLineCount = $thisLineCount + 1000;
+$nextLineCount = $thisLineCount + 100;
+@thisBuffer = ();
 while(true) {
 	$thisLine = int((rand() * 1000000000) - 0.5);
 	while(length($thisLine) < 9) {
 		$thisLine = "0" . $thisLine;
 	}
-	$thisLine = $thisLine . "\n";
-	print $socket $thisLine;
+	push(@thisBuffer, $thisLine);
+	# print $socket $thisLine;
 	$thisLineCount++;
 	if ($thisLineCount == $nextLineCount) {
+		push(@thisBuffer, "");
+		$thisBuffer = join("\n", @thisBuffer);
+		# print STDOUT "<<$thisBuffer>>";
+		print $socket $thisBuffer;
+		@thisBuffer = ();
+		$nextLineCount = $thisLineCount + 100;
+
 		$thisClock = time();
 		if ($thisClock >= $nextClock) {
-			print "$thisLineCount \@ $thisClock: $thisLine\n";
+			print "$thisLineCount \@ $thisClock: $thisLine\n\n";
 			$nextClock = $thisClock + 30;
 		}
-		$nextLineCount = $thisLineCount + 1000;
 	}
 }
 
