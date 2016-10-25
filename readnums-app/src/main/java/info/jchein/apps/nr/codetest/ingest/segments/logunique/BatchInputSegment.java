@@ -39,22 +39,20 @@ implements IStatsProviderSupplier
 	private final TimeUnit ioTimeUnit;
 	private final byte numDataPartitions;
 	private final IUniqueMessageTrie uniqueTest;
-
 	private final Timer ingestionTimer;
-
-	private final Broadcaster<Stream<MessageInput>> streamsToMerge;
+	private final Broadcaster<MessageInput> streamsToMerge;
 	private final ArrayList<Broadcaster<MessageInput>> fanOutBroadcasters;
 	private final IReusableAllocator<IWriteFileBuffer> writeFileBufferAllocator;
 
-	private Stream<IWriteFileBuffer> loadedWriteFileBufferStream;
-	private final ArrayList<Stream<IWriteFileBuffer>> streamTerminals;
 	private final int[] skipCounters;
+	private final ArrayList<Stream<IWriteFileBuffer>> streamTerminals;
 
+	private Stream<IWriteFileBuffer> loadedWriteFileBufferStream;
 
 	public BatchInputSegment( final short ioCount, final long ioPeriod, final TimeUnit ioTimeUnit,
 		final byte numDataPartitions, final EventBus eventBus, final Timer ingestionTimer,
 		final IUniqueMessageTrie uniqueTest,
-		final Broadcaster<Stream<MessageInput>> streamsToMerge,
+ final Broadcaster<MessageInput> streamsToMerge,
 		final IReusableAllocator<IWriteFileBuffer> writeFileBufferAllocator,
 		final ArrayList<Broadcaster<MessageInput>> fanOutBroadcasters )
 	{
@@ -68,10 +66,8 @@ implements IStatsProviderSupplier
 		this.numDataPartitions = numDataPartitions;
 		this.fanOutBroadcasters = fanOutBroadcasters;
 		this.writeFileBufferAllocator = writeFileBufferAllocator;
-
-		this.streamTerminals = new ArrayList<>(this.numDataPartitions);
 		this.skipCounters = new int[this.numDataPartitions];
-
+		this.streamTerminals = new ArrayList<>(this.numDataPartitions);
 	}
 
 
@@ -107,33 +103,33 @@ implements IStatsProviderSupplier
 			
 			this.streamTerminals.add(
 				nextBcast.filter(inputMsg -> {
-					if (this.uniqueTest.isUnique(
-						InputMessageCodec.parsePrefix(inputMsg.getMessageBytes()), inputMsg.getSuffix()))
-					{
-						return true;
-					} else {
+					final boolean retVal =
+						this.uniqueTest.isUnique(
+							InputMessageCodec.parsePrefix(
+								inputMsg.getMessageBytes()
+							), inputMsg.getSuffix());
+
+					if (!retVal) 
 						skipCounters[partitionIndex] += 1;
-						return false;
-					}
+
+					return retVal;
 				}).buffer(
 					this.ioCount, this.ioPeriod, this.ioTimeUnit, this.ingestionTimer
 				).map(messageList -> {
-						IWriteFileBuffer retVal = this.writeFileBufferAllocator.allocate();
-						for (MessageInput nextMsg : messageList) {
-							retVal.acceptUniqueInput(nextMsg.getMessageBytes());
-						}
-						retVal.trackSkippedDuplicates(skipCounters[partitionIndex]);
-						skipCounters[partitionIndex] = 0;
-	
-						retVal.afterWrite();
-						return retVal;
+					IWriteFileBuffer retVal = this.writeFileBufferAllocator.allocate();
+					for (MessageInput nextMsg : messageList) {
+						retVal.acceptUniqueInput(nextMsg.getMessageBytes());
+					}
+					retVal.trackSkippedDuplicates(skipCounters[partitionIndex]);
+					skipCounters[partitionIndex] = 0;
+
+					return retVal.afterWrite();
 				}).combine()
 			);
 		}
 
-		Stream<MessageInput> merge = this.streamsToMerge.<MessageInput> merge();
 		Stream<GroupedStream<Integer, MessageInput>> groupBy =
-			merge.groupBy(inputMsg -> Integer.valueOf(inputMsg.getPartitionIndex()));
+			this.streamsToMerge.groupBy(inputMsg -> Integer.valueOf(inputMsg.getPartitionIndex()));
 		Stream<GroupedStream<Integer, MessageInput>> groupByCombined = groupBy.combine();
 
 		final Control terminalControl = groupByCombined.consume(groupedStream -> {
@@ -142,44 +138,39 @@ implements IStatsProviderSupplier
 			
 			LOG.info(
 				"Pre-batch, post-group nested stream dispatched by {} of {} with a capacity of {}",
-				groupedStream.getDispatcher()
-					.toString(),
+				groupedStream.getDispatcher(),
 				groupedStream.getDispatcher()
 					.backlogSize(),
 				groupedStream.getCapacity());
 
 			LOG.info(
 				"Parallel broadcast stream dispatched by {} of {} with a capacity of {}",
-				groupBroadcaster.getDispatcher()
-					.toString(),
+				groupBroadcaster.getDispatcher(),
 				groupBroadcaster.getDispatcher()
 					.backlogSize(),
 				groupBroadcaster.getCapacity());
 
-			groupedStream.log("What thread am I?")
-				.consume(inputMsg -> {
-				groupBroadcaster.onNext(inputMsg);
-			});
+			groupedStream.consume(groupBroadcaster::onNext);
+			// inputMsg -> {
+			// groupBroadcaster.onNext(inputMsg);
+			// });
 		});
 
 		LOG.info(
 			"Post-merge outer stream dispatched by {} of {} with a capacity of {}",
-			merge.getDispatcher()
-				.toString(),
-			merge.getDispatcher()
+			this.streamsToMerge.getDispatcher(),
+			this.streamsToMerge.getDispatcher()
 				.backlogSize(),
-			merge.getCapacity());
+			this.streamsToMerge.getCapacity());
 		LOG.info(
 			"Post-groupBy outer stream dispatched by {} of {} with a capacity of {}",
-			groupBy.getDispatcher()
-				.toString(),
+			groupBy.getDispatcher(),
 			groupBy.getDispatcher()
 				.backlogSize(),
 			groupBy.getCapacity());
 		LOG.info(
 			"Combined outer stream dispatched by {} of {} with a capacity of {}",
-			groupByCombined.getDispatcher()
-				.toString(),
+			groupByCombined.getDispatcher(),
 			groupByCombined.getDispatcher()
 				.backlogSize(),
 			groupByCombined.getCapacity());

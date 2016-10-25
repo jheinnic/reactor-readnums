@@ -33,7 +33,7 @@ import info.jchein.apps.nr.codetest.ingest.segments.tcpserver.ServerSegment;
 import reactor.Environment;
 import reactor.bus.EventBus;
 import reactor.core.Dispatcher;
-import reactor.core.config.DispatcherType;
+import reactor.core.dispatch.RingBufferDispatcher;
 import reactor.core.dispatch.wait.AgileWaitingStrategy;
 import reactor.core.processor.RingBufferProcessor;
 import reactor.core.support.NamedDaemonThreadFactory;
@@ -43,7 +43,7 @@ import reactor.fn.timer.Timer;
 import reactor.io.buffer.Buffer;
 import reactor.io.codec.Codec;
 import reactor.io.codec.DelimitedCodec;
-import reactor.rx.Stream;
+import reactor.jarjar.com.lmax.disruptor.dsl.ProducerType;
 import reactor.rx.broadcast.Broadcaster;
 
 @Configuration
@@ -96,14 +96,15 @@ public class IngestConfiguration
    {
       final String dispatcherName =
       	paramsConfig.lifecycleEventBusName + "Dispatcher";
-		final Dispatcher eventBusDispatcher =
-         Environment.newDispatcher(
-            dispatcherName,
-				RingBufferUtils.nextSmallestPowerOf2(paramsConfig.lifecycleEventBusBufferSize),
-				paramsConfig.lifecycleEventBusThreads, DispatcherType.RING_BUFFER);
+		final int backlogSize =
+			RingBufferUtils.nextSmallestPowerOf2(paramsConfig.lifecycleEventBusBufferSize);
 
-      reactorEnvironment()
-      	.setDispatcher(dispatcherName, eventBusDispatcher);
+		final Dispatcher eventBusDispatcher =
+			new RingBufferDispatcher(
+				dispatcherName, backlogSize, err -> LOG.error("Error", err), ProducerType.MULTI,
+				agileWaitingStrategy());
+		reactorEnvironment()
+			.setDispatcher(dispatcherName, eventBusDispatcher);
 
       return eventBusDispatcher;
    }
@@ -163,36 +164,36 @@ public class IngestConfiguration
 		// return new LiteBlockingWaitStrategy();
 	}
 
+	private static final String HANDOFF_DISPATCHER_NAME = "handoffDispatcher";
+	
    @Bean
    @Scope("singleton")
 	Dispatcher handoffDispatcher()
    {
-		return Environment.newDispatcher(
-			"handoffDispatcher",
-			RingBufferUtils.nextSmallestPowerOf2(paramsConfig.fanOutRingBufferSize),
-			paramsConfig.dataPartitionCount,
-			DispatcherType.RING_BUFFER);
+		final int backlogSize = RingBufferUtils.nextSmallestPowerOf2(
+			paramsConfig.fanOutRingBufferSize * paramsConfig.dataPartitionCount);
+
+   	final Dispatcher handoffDispatcher = 
+			new RingBufferDispatcher(
+				HANDOFF_DISPATCHER_NAME, backlogSize,
+				err -> LOG.error("Socket handoff dispatch Error", err),
+				ProducerType.MULTI,
+				agileWaitingStrategy());
+		reactorEnvironment()
+			.setDispatcher(HANDOFF_DISPATCHER_NAME, handoffDispatcher);
+
+		return handoffDispatcher;
 	}
 
 
-	// @Bean
-	// @Scope("singleton")
-	// Broadcaster<Stream<GroupedStream<Integer, MessageInput>>> mergedSocketsBroadcaster()
-	// {
-	// return Broadcaster.<Stream<GroupedStream<Integer, MessageInput>>> create(
-	// reactorEnvironment(), handoffDispatcher());
-	// }
-
-
-   /*================+
-    | Access Segment |
-    +================*/
+   /*==========================+
+    | Server Interface Segment |
+    +==========================*/
 
    @Bean
    @Scope("singleton")
    Codec<Buffer, MessageInput, MessageInput> codec() {
-		return new DelimitedCodec<>(
-         true, codecDelegate());
+		return new DelimitedCodec<>(true, codecDelegate());
    }
 
    @Bean
@@ -208,16 +209,31 @@ public class IngestConfiguration
    ConnectionHandler connectionHandler( final Consumer<Void> terminationConsumer )
    {
       return new ConnectionHandler(
-			paramsConfig.maxConcurrentSockets, terminationConsumer, handoffDispatcher(), streamsToMerge());
+			paramsConfig.maxConcurrentSockets, terminationConsumer, streamsToMerge());
    }
 
 
 	@Bean
 	@Scope("singleton")
-	Broadcaster<Stream<MessageInput>> streamsToMerge()
+	Broadcaster<MessageInput> streamsToMerge()
 	{
-		// return Broadcaster.create(reactorEnvironment(), handoffDispatcher());
-		return Broadcaster.create(reactorEnvironment(), lifecycleEventBusDispatcher());
+		// NOTE: This dispatcher ends up used not only to feed each incoming connection to the
+		//       merge() function at the head of BatchInputSegment, but also carries each 
+		//       individual input message from the groupBy partitioning to its handoff to an
+		//       appropriate partition-dispatched Broadcaster.  This is why the backlog allocated
+		//       for the handoff dispatcher is the per-partition backlog times the number of
+		//       partitions.
+		// NOTE: The handoff dispatcher requires a MULTI producer config because it receives inputs
+		//       from the serer's multithreaded WorkerQueue.  And since the handoff itself is single
+		//       threaded, we can configure the per-partition dispatchers as SINGLE-producer
+		//       dispatchers.
+		// TODO: See if we can find a way to merge the connection streams without an intermediate
+		//       single threaded broadcaster.  Instead of a MULTI -> MULTI -> SINGLE dispatcher 
+		//       path, this would yield a MULTI -> MULTI dispatcher path.  The partition dispatchers
+		//       would have to become multi-producers, but since we are dropping a MULTI producer
+		//       Dispatcher at the same time, this would arguably still be faster.
+		return Broadcaster.create(reactorEnvironment(), handoffDispatcher());
+		// return Broadcaster.create(reactorEnvironment(), lifecycleEventBusDispatcher());
 	}
 
 
@@ -225,6 +241,10 @@ public class IngestConfiguration
    @Scope("singleton")
    @Autowired
    ServerSegment serverSegment( final ConnectionHandler connectionHandler ) {
+   	// NOTE: The server segment depends implicitly on an Dispatcher named "serverDispatcher", which
+   	//       is defined in reactor-environment.properties and retrieved by its name from Environment
+   	//       by a reactor library object used within ServerSegment.
+		// TODO: Make this a little more cleanly injected by injecting the name, "serverDispatcher".
       return new ServerSegment(
          this.paramsConfig.bindHost,
          this.paramsConfig.bindPort,
@@ -255,8 +275,6 @@ public class IngestConfiguration
          this.paramsConfig.ingestionTimerWaitKind.get(),
          Executors.newFixedThreadPool(
          	1, new NamedDaemonThreadFactory("inputBatchingTimer")));
-		// Environment.get()...;
-		// return retVal;
    }
 
 
@@ -270,26 +288,26 @@ public class IngestConfiguration
 
    @Bean
    @Scope("singleton")
-	// Processor<GroupedStream<Integer, MessageInput>, GroupedStream<Integer, MessageInput>>[]
    Dispatcher[] fanOutDispatchers()
 	{
-		// final Processor<GroupedStream<Integer, MessageInput>, GroupedStream<Integer, MessageInput>>[] fanOutProcessors =
-      //    new Processor[paramsConfig.dataPartitionCount];
+		final int backlogSize = 
+			RingBufferUtils.nextSmallestPowerOf2(paramsConfig.fanOutRingBufferSize);
+
       final Dispatcher[] fanOutDispatchers = new Dispatcher[paramsConfig.dataPartitionCount];
       for (int ii = 0; ii < paramsConfig.dataPartitionCount; ii++) {
          fanOutDispatchers[ii] =
-				Environment.newDispatcher(
-					"fanOutDispatcher-" + ii,
-					RingBufferUtils.nextSmallestPowerOf2(paramsConfig.fanOutRingBufferSize), 4,
-					DispatcherType.RING_BUFFER);
-			// new RingBufferDispatcher(
-			// err -> LOG.error("Error", err), ProducerType.MULTI, liteDispatchWaitStrategy());
+         	new RingBufferDispatcher(
+					"fanOutDispatcher-" + ii, backlogSize, err -> LOG.error("Error", err),
+					ProducerType.SINGLE, agileWaitingStrategy());
+			reactorEnvironment().setDispatcher("fanOutDispatcher-" + ii, fanOutDispatchers[ii]);
       }
 
 		return fanOutDispatchers;
    }
 
 
+	@Bean
+	@Scope("singleton")
 	ArrayList<Broadcaster<MessageInput>> fanOutBroadcasters()
 	{
 		Dispatcher[] fanOutDispatchers = fanOutDispatchers();
@@ -320,9 +338,9 @@ public class IngestConfiguration
    }
 
 
-   //=================//
-   // Output Pipeline //
-   //=================//
+   /*=================+
+    | Output Pipeline |
+    +=================*/
 
 	@Bean
 	@Scope("singleton")

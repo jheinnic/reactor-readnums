@@ -102,7 +102,7 @@ public class ParametersConfiguration
 	@Value("1250")
    public int ingestionTimerResolutionMillis;
 
-	@Value("YIELD")
+	@Value("SLEEP")
    public TimerWaitKind ingestionTimerWaitKind;
 
 	@Value("131072")

@@ -1,12 +1,11 @@
 package info.jchein.apps.nr.codetest.ingest.segments.tcpserver;
 
-import info.jchein.apps.nr.codetest.ingest.messages.MessageInput;
-
 import java.util.Map;
 
-import reactor.io.net.ChannelStream;
-
 import com.google.common.collect.ImmutableMap;
+
+import info.jchein.apps.nr.codetest.ingest.messages.MessageInput;
+import reactor.io.net.ChannelStream;
 
 class SocketRegistry
 {
@@ -75,9 +74,10 @@ class SocketRegistry
    }
 
 
-   SocketRegistry cancelSocketAvailability(int maxConcurrentConnections)
+	SocketRegistry cancelSocketAvailability(int availableReductionCount)
    {
-      return new SocketRegistry(this.openSocketContexts, -1 * maxConcurrentConnections);
+		return new SocketRegistry(
+			this.openSocketContexts, this.socketsAvailable - availableReductionCount);
    }
 
 
