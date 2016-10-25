@@ -15,6 +15,8 @@ PeerPort => '4000',
 Proto => 'tcp',
 ) or die "ERROR in Socket Creation : $!\n";
 
+$socket->sockopt(SO_SNDBUF, 16384);
+
 print "TCP Connection Success.\n";
 
 $msgCount = 0;
