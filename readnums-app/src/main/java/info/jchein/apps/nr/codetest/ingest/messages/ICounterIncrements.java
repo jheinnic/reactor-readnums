@@ -88,4 +88,7 @@ extends IReusable
 	 * @return
 	 */
 	public ICounterIncrements beforeRead();
+
+
+	public ICounterIncrements finalizeAggregate();
 }

@@ -8,7 +8,6 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
@@ -30,9 +29,7 @@ import reactor.bus.Event;
 import reactor.bus.EventBus;
 import reactor.fn.Function;
 import reactor.fn.timer.Timer;
-import reactor.rx.Stream;
 import reactor.rx.action.Control;
-import reactor.rx.action.support.TapAndControls;
 
 
 /**
@@ -61,7 +58,6 @@ implements IStatsProviderSupplier
 	private final Condition completed = shutdownLock.newCondition();
 
 	private FileOutputStream outputFileStream;
-	private Stream<ICounterIncrements> reportCounterIncrementsStream;
 
 	// private Control terminalContol;
 
@@ -134,90 +130,60 @@ implements IStatsProviderSupplier
 
 	private Control initFileWriterPartial()
 	{
-		this.reportCounterIncrementsStream =
- this.batchInputSegment.getLoadedWriteFileBufferStream()
-				.process(this.writeOutputFileProcessor)
-			.map(writeBuffer -> processBatch(writeBuffer))
-			.observeError(Throwable.class, (v, e) -> {
-				final StringBuffer msg = new StringBuffer(1024);
-
-				int partitionNum = 0;
-				final Iterator<TapAndControls<IWriteFileBuffer>> tapIter =
-					this.batchInputSegment.getPartitionedTaps();
-				while (tapIter.hasNext()) {
-					msg.append("-- Last on partition index = ")
-						.append(partitionNum++)
-						.append(" was ")
-						.append(tapIter.next()
-							.get())
-						.append('\n');
-				}
-				LOG.error(
-					String.format(
-						"Tap scan on error triggered by %s: %s-- Exception: {}", v, msg.toString()),
-					e);
-			});
-
 		LOG.info("Console reporting interval is every {} seconds", Long.valueOf(reportIntervalInSeconds));
 
-		return this.reportCounterIncrementsStream.observeCancel(evt -> {
-				// Toggle the first seenOnComplete flag once input to the final window is recognized by
-				// observing a SHUTDOWN event being fed to the window boundary. Note that we are taking
-				// advantage observeCancel()'s bug that causes it to trigger on SHUTDOWN signals rather
-				// than CANCEL signals since there is no native observeShutdown() observer!
-				shutdownLock.lock();
-				try {
-					seenOnComplete[0] = true;
-					LOG.info(
-						"Performance stats segment receives an end of stream signal.  No additional data will follow.");
-				}
-				finally {
-					shutdownLock.unlock();
-				}
-			})
-			.window(this.reportIntervalInSeconds, TimeUnit.SECONDS, this.ingestionTimer)
-			.combine()
-			.consume(statStream -> {
-				// statStream.startWith(
-				// Streams.just(
-				// counterIncrementsAllocator.allocate()
-				// .setDeltas(0, 0))
-				// )
-				statStream.reduce(
-					counterIncrementsAllocator.allocate().setDeltas(0, 0),
-					(prevStat, nextStat) -> {
-						nextStat.beforeRead();
-						prevStat.incrementDeltas(nextStat);
-						nextStat.release();
+		// Break the stream into subunits with buffer() instead of window() because the
+		// act of re-subscribing the next window stream to the ring buffer processor
+		// has a side effect of creating additional subscribers. The first window's
+		// thread processes the events first still and releases them, then the second
+		// window's thread attempts to do the same thing and finds itself handling an
+		// unreserved IWriteFileBuffer, causing a thrown exception.
 
-						return prevStat;
+		return
+		   this.batchInputSegment.getLoadedWriteFileBufferStream()
+				.process(this.writeOutputFileProcessor)
+				// .log("flushed buffer")
+				.map(writeBuffer -> processBatch(writeBuffer))
+				.observeCancel(evt -> {
+					// Toggle the first seenOnComplete flag once input to the final window is recognized by
+					// observing a SHUTDOWN event being fed to the window boundary. Note that we are taking
+					// advantage observeCancel()'s bug that causes it to trigger on SHUTDOWN signals rather
+					// than CANCEL signals since there is no native observeShutdown() observer!
+					shutdownLock.lock();
+					try {
+						seenOnComplete[0] = true;
+						LOG.info(
+							"Performance stats segment receives an end of stream signal.  No additional data will follow.");
 					}
-				).consume(deltaSum -> {
-					// First argument to format aggregates the total unique counter and returns the duration
-					// since the last update. Remaining arguments are simple getters. If this is later
-					// rearranged, understand that initial call to incrementUniqueValues() establishes time
-					// duration for subsequent call to getTotalDuration() as well as total unique counter for
-					// subsequent call to getTotalUniques(). Call to incrementUniqueValues() must therefore
-					// precede either call to other two methods called out in this comment.
+					finally {
+						shutdownLock.unlock();
+					}
+				})
+				.buffer(this.reportIntervalInSeconds, TimeUnit.SECONDS, this.ingestionTimer)
+				.combine()
+				.consume(statList -> {
+					int deltaUniques = 0;
+					int deltaDuplicates = 0;
+					for( final ICounterIncrements nextPartial : statList) {
+						nextPartial.beforeRead();
+						deltaUniques += nextPartial.getDeltaUniques();
+						deltaDuplicates += nextPartial.getDeltaDuplicates();
+						nextPartial.release();
+					}
+	
 					LOG.info(
 						String.format(
 							"During the last %d seconds, %d unique 9-digit inputs were logged and %d redundant inputs were discarded.\nSince service launch (%d seconds), %d unique 9-digit inputs have been logged.\n\n",
 							Long.valueOf(
 								TimeUnit.NANOSECONDS.toSeconds(
-									cumulativeValues.incrementUniqueValues(deltaSum.getDeltaUniques()))),
-							Integer.valueOf(deltaSum.getDeltaUniques()),
-							Integer.valueOf(deltaSum.getDeltaDuplicates()),
-							Long.valueOf(TimeUnit.NANOSECONDS.toSeconds(cumulativeValues.getTotalDuration())),
+									cumulativeValues.incrementUniqueValues(deltaUniques))),
+							Integer.valueOf(deltaUniques),
+							Integer.valueOf(deltaDuplicates),
+							Long.valueOf(
+								TimeUnit.NANOSECONDS.toSeconds(
+									cumulativeValues.getTotalDuration())),
 							Integer.valueOf(cumulativeValues.getTotalUniques())));
-					deltaSum.release();
 				});
-			});
-	}
-
-
-	public Stream<ICounterIncrements> getReportCounterIncrementsStream()
-	{
-		return reportCounterIncrementsStream;
 	}
 
 

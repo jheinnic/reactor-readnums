@@ -57,6 +57,10 @@ implements IReusableObjectInternal<I>, IReusable, Recyclable
 	private static AtomicIntegerFieldUpdater<AbstractReusableObject> ATOMIC_REF_COUNT_UPDATE =
 		AtomicIntegerFieldUpdater.newUpdater(AbstractReusableObject.class, "refCnt");
 
+	@SuppressWarnings("rawtypes")
+	private static AtomicIntegerFieldUpdater<AbstractReusableObject> ATOMIC_SYNC_BIT_UPDATE =
+		AtomicIntegerFieldUpdater.newUpdater(AbstractReusableObject.class, "syncBit");
+
    // An atomic updater for supporting public interface methods that provide concrete subclasses an interface driven
    // memory barrier without resorting to heavier mutual exclusion locks.  The tradeoff is that it is developer's
    // responsibility to ensure all write access is single-threaded.  For use cases where a message is written before
@@ -142,11 +146,11 @@ implements IReusableObjectInternal<I>, IReusable, Recyclable
          updated,
          "Reference count for %s became non-zero while handling reserve(), but it was not updated by thread calling reserve().  Lease age may no longer be accurate.",
          this);
+      
 		Verify.verify(
-			this.syncBit == 1,
-			"Volatile synchronization bit was not set to 1 before reusable {} with index {} was just reserved",
-			this.getTypeName(),
-			this.getPoolIndex());
+			ATOMIC_SYNC_BIT_UPDATE.compareAndSet(this, 1, 2),
+			"reserve() was called on a reserved object of type %s with index %s.  Sync bit was %s, expected 1.",
+			this.getTypeName(), this.getPoolIndex(), this.syncBit);
 
 		return incr;
    }
@@ -182,7 +186,7 @@ implements IReusableObjectInternal<I>, IReusable, Recyclable
 		// the time the value will be 1, and so risking a potential extra failed write pays off.
 		int origRefCnt = 1;
 		int newRefCnt = incr + 1;
-		while ((origRefCnt > 0) && ATOMIC_REF_COUNT_UPDATE.compareAndSet(this, origRefCnt, newRefCnt)) {
+		while ((origRefCnt > 0) && ATOMIC_REF_COUNT_UPDATE.weakCompareAndSet(this, origRefCnt, newRefCnt)) {
 			origRefCnt = ATOMIC_REF_COUNT_UPDATE.get(this);
          newRefCnt = origRefCnt + incr;
 			Preconditions
@@ -212,7 +216,7 @@ implements IReusableObjectInternal<I>, IReusable, Recyclable
 		int origRefCnt = decr;
 		int newRefCnt = 0;
 		while ((origRefCnt >= decr) &&
-			(!ATOMIC_REF_COUNT_UPDATE.compareAndSet(this, origRefCnt, newRefCnt)))
+			(!ATOMIC_REF_COUNT_UPDATE.weakCompareAndSet(this, origRefCnt, newRefCnt)))
 		{
 			origRefCnt = ATOMIC_REF_COUNT_UPDATE.get(this);
 			newRefCnt = origRefCnt - decr;
@@ -228,8 +232,11 @@ implements IReusableObjectInternal<I>, IReusable, Recyclable
 			// responsible for ensuring reading from a volatile field that was updated after the last state change
 			// required.
 			this.recycle();
-			this.syncBit = 1;
-			// this.releaseCallback.accept(this);
+			Preconditions.checkState(
+				ATOMIC_SYNC_BIT_UPDATE.compareAndSet(this, 4, 1),
+				"release() recycled an object that was not reserved, written, and acknowledged for read.  Sync bit was %s, expected 4.",
+				this.syncBit
+			);
       }
    }
 
@@ -248,7 +255,10 @@ implements IReusableObjectInternal<I>, IReusable, Recyclable
 	@SuppressWarnings("unchecked")
 	protected C afterWrite()
 	{
-		this.syncBit = 0;
+		Verify.verify(
+			ATOMIC_SYNC_BIT_UPDATE.compareAndSet(this, 2, 3),
+			"afterWrite() called on an object that was not reserved and uncommitted for write.  Sync bit was %s, expected 2.",
+			this.syncBit);
 		return (C) this;
 	}
 
@@ -265,7 +275,10 @@ implements IReusableObjectInternal<I>, IReusable, Recyclable
 	@SuppressWarnings("unchecked")
 	protected C beforeRead()
 	{
-		Verify.verify(this.syncBit == 0, "Before read called before a write was comitted");
+		Verify.verify(
+			ATOMIC_SYNC_BIT_UPDATE.compareAndSet(this, 3, 4),
+			"beforeRead() called on an object that was not reserved and write committed.  Sync bit was %s, expected 3.",
+			this.syncBit);
 		return (C) this;
 	}
 
@@ -275,6 +288,8 @@ implements IReusableObjectInternal<I>, IReusable, Recyclable
 	{
 		return new StringBuilder().append("ReusableObject{refCnt=")
 			.append(refCnt)
+			.append(", syncBit=")
+			.append(syncBit)
 			.append(", poolIndex=")
 			.append(poolIndex)
 			.append(", inception=")

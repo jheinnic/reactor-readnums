@@ -26,7 +26,7 @@ extends AbstractSegment
    private static final Logger LOG = LoggerFactory.getLogger(ServerSegment.class);
 
    private final ConnectionHandler connectionHandler;
-   private final TcpServer<MessageInput,MessageInput> tcpServer;
+	private final TcpServer<MessageInput, Object> tcpServer;
 
    public ServerSegment(
       final String bindHost,
@@ -37,12 +37,12 @@ extends AbstractSegment
       final EventBus eventBus,
       final Environment environment,
       final ConnectionHandler connectionHandler,
-      final Codec<Buffer, MessageInput, MessageInput> codec )
+		final Codec<Buffer, MessageInput, Object> codec )
    {
       super(eventBus);
 
       this.connectionHandler = connectionHandler;
-      tcpServer = NetStreams.<MessageInput,MessageInput> tcpServer(
+		tcpServer = NetStreams.<MessageInput, Object> tcpServer(
          NettyTcpServer.class,
          aSpec -> {
             return aSpec.env(environment)
@@ -54,7 +54,7 @@ extends AbstractSegment
                .rcvbuf(socketReceiveBufferSize)
                .backlog(maxConcurrentSockets)
                .timeout(socketTimeoutMillis)
-					.prefetch(0)// Long.MAX_VALUE) // 10)
+					.prefetch(2048)// Long.MAX_VALUE) // 10)
 					.tcpNoDelay(false)
 					.keepAlive(true)
 					.reuseAddr(true)

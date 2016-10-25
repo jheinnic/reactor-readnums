@@ -9,15 +9,17 @@ import reactor.io.codec.Codec;
 
 
 public final class InputMessageCodec
-extends Codec<Buffer, MessageInput, MessageInput>
+extends Codec<Buffer, MessageInput, Object>
 {
    // private static final Logger LOG = LoggerFactory.getLogger(InputMessageCodec.class);
 
    private static final byte[] TERMINATE = "terminate".getBytes();
    private static final Buffer EMPTY_BUFFER = Buffer.wrap(new byte[0]);
+	private static final ThreadLocal<MessageInput.Builder> msgBuilder =
+		ThreadLocal.withInitial(() -> MessageInput.builder());
 
    private static final byte BYTE_0 = 48;
-	// private static final byte BYTE_9 = 57;
+	private static final byte BYTE_9 = 57;
    private static final byte BYTE_NL = 13;
 
 	private static final byte INT_MSGBUF_1s = 8;
@@ -67,7 +69,6 @@ extends Codec<Buffer, MessageInput, MessageInput>
 	// To avoid converting indices 6, 7, and 8 to 0, 1, and 2, this array makes a tradeoff
 	// by allocating unused data cells for first-dimension indices 0 through 5.
 	private static final short[][] SHORT_SUFFIX_PLACES = new short[3][10];
-
 
 	static {
       int intPlaceBase = 1;
@@ -234,13 +235,13 @@ extends Codec<Buffer, MessageInput, MessageInput>
    }
 
 
-	private MessageInput identifyBuffer(final byte[] bytes9)
+	private MessageInput identifyBuffer(final byte[] bytes)
 	{
 		MessageInput candidate;
 		candidate =
-			((candidate = isTerminateMsg(bytes9)) != null)
+			((candidate = isTerminateMsg(bytes)) != null)
 				? candidate
-				: ((candidate = ifNineDigitMessage(bytes9)) != null)
+				: ((candidate = ifNineDigitMessage(bytes)) != null)
 					? candidate
 					: getMessageInputInvalidContent();
 		return candidate;
@@ -249,9 +250,23 @@ extends Codec<Buffer, MessageInput, MessageInput>
 
    MessageInput ifNineDigitMessage(final byte[] msgBuf)
    {
+		if (
+			(msgBuf[INT_MSGBUF_1000s] < BYTE_0) || (msgBuf[INT_MSGBUF_1000s] > BYTE_9) ||
+			(msgBuf[INT_MSGBUF_10000s] < BYTE_0) || (msgBuf[INT_MSGBUF_10000s] > BYTE_9) ||
+			(msgBuf[INT_MSGBUF_100000s] < BYTE_0) || (msgBuf[INT_MSGBUF_100000s] > BYTE_9) ||
+			(msgBuf[INT_MSGBUF_1000000s] < BYTE_0) || (msgBuf[INT_MSGBUF_1000000s] > BYTE_9) ||
+			(msgBuf[INT_MSGBUF_10000000s] < BYTE_0) || (msgBuf[INT_MSGBUF_10000000s] > BYTE_9) ||
+			(msgBuf[INT_MSGBUF_100000000s] < BYTE_0) || (msgBuf[INT_MSGBUF_100000000s] > BYTE_9)
+		) { return null; }
+
 		final byte ones = (byte) (msgBuf[INT_MSGBUF_1s] - BYTE_0);
+		if ((ones < 0) || (ones > 9)) { return null; }
+
 		final byte tens = (byte) (msgBuf[INT_MSGBUF_10s] - BYTE_0);
+		if ((tens < 0) || (tens > 9)) { return null; }
+
 		final byte huns = (byte) (msgBuf[INT_MSGBUF_100s] - BYTE_0);
+		if ((huns < 0) || (huns > 9)) { return null; }
       
    	final short suffix = (short) (
    		SHORT_SUFFIX_PLACES[SHORT_SUFFIX_1s][ones] +
@@ -269,7 +284,7 @@ extends Codec<Buffer, MessageInput, MessageInput>
 				this.suffixPartitionPlaces[SHORT_SUFFIX_10s][tens] +
 				this.suffixPartitionPlaces[SHORT_SUFFIX_100s][huns]];
 
-		return MessageInput.builder()
+		return msgBuilder.get()
 			.messageBytes(msgBuf)
 			.suffix(suffix)
 			.partitionIndex(partitionIndex)
@@ -434,7 +449,7 @@ extends Codec<Buffer, MessageInput, MessageInput>
 
 
    @Override
-   public Buffer apply(final MessageInput t)
+	public Buffer apply(final Object t)
    {
       return EMPTY_BUFFER;
    }

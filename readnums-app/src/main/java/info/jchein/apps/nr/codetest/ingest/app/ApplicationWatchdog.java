@@ -48,8 +48,8 @@ implements SmartLifecycle
 
    public ApplicationWatchdog(
       @NotNull IConsole console,
-      @NotNull Codec<Buffer, MessageInput, MessageInput> codec,
-      @NotNull Broadcaster<?> broadcaster,
+		@NotNull Codec<Buffer, MessageInput, Object> codec,
+		@NotNull Broadcaster<MessageInput> broadcaster,
       @NotNull ConfigurableApplicationContext appCtxt
    ) {
       this.console = console;

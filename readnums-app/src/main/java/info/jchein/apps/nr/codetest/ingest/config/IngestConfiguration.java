@@ -159,7 +159,7 @@ public class IngestConfiguration
 	// LiteBlockingWaitStrategy agileWaitingStrategy()
 	{
 		final AgileWaitingStrategy retVal = new AgileWaitingStrategy();
-		// retVal.nervous();
+		retVal.nervous();
 		return retVal;
 		// return new LiteBlockingWaitStrategy();
 	}
@@ -192,7 +192,8 @@ public class IngestConfiguration
 
    @Bean
    @Scope("singleton")
-   Codec<Buffer, MessageInput, MessageInput> codec() {
+	Codec<Buffer, MessageInput, Object> codec()
+	{
 		return new DelimitedCodec<>(true, codecDelegate());
    }
 
@@ -228,7 +229,7 @@ public class IngestConfiguration
 		//       threaded, we can configure the per-partition dispatchers as SINGLE-producer
 		//       dispatchers.
 		// TODO: See if we can find a way to merge the connection streams without an intermediate
-		//       single threaded broadcaster.  Instead of a MULTI -> MULTI -> SINGLE dispatcher 
+
 		//       path, this would yield a MULTI -> MULTI dispatcher path.  The partition dispatchers
 		//       would have to become multi-producers, but since we are dropping a MULTI producer
 		//       Dispatcher at the same time, this would arguably still be faster.
@@ -261,7 +262,6 @@ public class IngestConfiguration
    /*========================+
     | Input Batching Segment |
     +========================*/
-
 
    @Bean
    @Scope("singleton")
@@ -298,7 +298,7 @@ public class IngestConfiguration
          fanOutDispatchers[ii] =
          	new RingBufferDispatcher(
 					"fanOutDispatcher-" + ii, backlogSize, err -> LOG.error("Error", err),
-					ProducerType.SINGLE, agileWaitingStrategy());
+					ProducerType.MULTI, agileWaitingStrategy());
 			reactorEnvironment().setDispatcher("fanOutDispatcher-" + ii, fanOutDispatchers[ii]);
       }
 
@@ -349,7 +349,7 @@ public class IngestConfiguration
 		return RingBufferProcessor.<IWriteFileBuffer> share(
 			"writeOutputFileProcessor",
 			RingBufferUtils.nextSmallestPowerOf2(paramsConfig.writeOutputRingBufferSize),
-			agileWaitingStrategy(), true);
+			true);
 	}
 
 

@@ -71,13 +71,12 @@ public class TryBuffer
 		final ReusableObjectAllocator<ICounterIncrements, CounterIncrements> counterAlloc =
 			new ReusableObjectAllocator<>(2048, null);
 
-      final Codec<Buffer, MessageInput, MessageInput> msgCodec =
+		final Codec<Buffer, MessageInput, Object> msgCodec =
 			new DelimitedCodec<>(
 				true, new InputMessageCodec(numDataPartitions));
 
-      final TcpServer<MessageInput, MessageInput> tcpServer =
-         NetStreams.<MessageInput,
-         MessageInput> tcpServer(
+		final TcpServer<MessageInput, Object> tcpServer =
+			NetStreams.<MessageInput, Object> tcpServer(
             NettyTcpServer.class,
             aSpec -> {
                return aSpec.env(
@@ -217,7 +216,7 @@ public class TryBuffer
       tcpServer.start(channelStream -> {
          LOG.info("In connection handler");
 
-         final ChannelStream<MessageInput,MessageInput> theChannelStream = channelStream;
+			final ChannelStream<MessageInput, Object> theChannelStream = channelStream;
 
          streamsToMerge.onNext(
             theChannelStream.filter( evt -> {

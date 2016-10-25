@@ -2,11 +2,12 @@ package info.jchein.apps.nr.codetest.ingest.segments.logunique;
 
 
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.concurrent.TimeUnit;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import com.google.common.base.Verify;
 
 import info.jchein.apps.nr.codetest.ingest.lifecycle.AbstractSegment;
 import info.jchein.apps.nr.codetest.ingest.messages.IWriteFileBuffer;
@@ -23,9 +24,7 @@ import reactor.fn.timer.Timer;
 import reactor.rx.Stream;
 import reactor.rx.Streams;
 import reactor.rx.action.Control;
-import reactor.rx.action.support.TapAndControls;
 import reactor.rx.broadcast.Broadcaster;
-import reactor.rx.stream.GroupedStream;
 
 
 public class BatchInputSegment
@@ -100,9 +99,8 @@ implements IStatsProviderSupplier
 		for (int ii = 0; ii < this.numDataPartitions; ii++) {
 			final int partitionIndex = ii;
 			final Broadcaster<MessageInput> nextBcast = this.fanOutBroadcasters.get(ii);
-			
-			this.streamTerminals.add(
-				nextBcast.filter(inputMsg -> {
+
+			this.streamTerminals.add(nextBcast.filter(inputMsg -> {
 					final boolean retVal =
 						this.uniqueTest.isUnique(
 							InputMessageCodec.parsePrefix(
@@ -123,59 +121,24 @@ implements IStatsProviderSupplier
 					retVal.trackSkippedDuplicates(skipCounters[partitionIndex]);
 					skipCounters[partitionIndex] = 0;
 
-					return retVal.afterWrite();
+					retVal = retVal.afterWrite();
+					if (retVal == null) {
+						LOG.error("IWriteFileBuffer.afterWrite() returned null!?");
+					}
+					Verify.verifyNotNull(retVal);
+					return retVal;
 				}).combine()
-			);
+);
 		}
 
-		Stream<GroupedStream<Integer, MessageInput>> groupBy =
-			this.streamsToMerge.groupBy(inputMsg -> Integer.valueOf(inputMsg.getPartitionIndex()));
-		Stream<GroupedStream<Integer, MessageInput>> groupByCombined = groupBy.combine();
-
-		final Control terminalControl = groupByCombined.consume(groupedStream -> {
-			final Broadcaster<MessageInput> groupBroadcaster = 
-				this.fanOutBroadcasters.get(groupedStream.key());
-			
-			LOG.info(
-				"Pre-batch, post-group nested stream dispatched by {} of {} with a capacity of {}",
-				groupedStream.getDispatcher(),
-				groupedStream.getDispatcher()
-					.backlogSize(),
-				groupedStream.getCapacity());
-
-			LOG.info(
-				"Parallel broadcast stream dispatched by {} of {} with a capacity of {}",
-				groupBroadcaster.getDispatcher(),
-				groupBroadcaster.getDispatcher()
-					.backlogSize(),
-				groupBroadcaster.getCapacity());
-
-			groupedStream.consume(groupBroadcaster::onNext);
-			// inputMsg -> {
-			// groupBroadcaster.onNext(inputMsg);
-			// });
-		});
-
-		LOG.info(
-			"Post-merge outer stream dispatched by {} of {} with a capacity of {}",
-			this.streamsToMerge.getDispatcher(),
-			this.streamsToMerge.getDispatcher()
-				.backlogSize(),
-			this.streamsToMerge.getCapacity());
-		LOG.info(
-			"Post-groupBy outer stream dispatched by {} of {} with a capacity of {}",
-			groupBy.getDispatcher(),
-			groupBy.getDispatcher()
-				.backlogSize(),
-			groupBy.getCapacity());
-		LOG.info(
-			"Combined outer stream dispatched by {} of {} with a capacity of {}",
-			groupByCombined.getDispatcher(),
-			groupByCombined.getDispatcher()
-				.backlogSize(),
-			groupByCombined.getCapacity());
+		final Control terminalControl =
+			this.streamsToMerge.groupBy(inputMsg -> Integer.valueOf(inputMsg.getPartitionIndex()))
+				.consume(groupedStream -> {
+					groupedStream.consume(this.fanOutBroadcasters.get(groupedStream.key())::onNext);
+			});
 
 		this.loadedWriteFileBufferStream = Streams.merge(this.streamTerminals);
+			// .log("flushing buffer");
 
 		return evt -> {
 			terminalControl.cancel();
@@ -190,14 +153,6 @@ implements IStatsProviderSupplier
 	}
 
 
-	public Iterator<TapAndControls<IWriteFileBuffer>> getPartitionedTaps()
-	{
-		return this.streamTerminals.stream()
-			.map(stream -> stream.tap())
-			.iterator();
-	}
-
-
 	@Override
 	public Iterable<IStatsProvider> get()
 	{
@@ -207,7 +162,8 @@ implements IStatsProviderSupplier
 			retVal.add(
 				new ResourceStatsAdapter(
 					"Partitioned Input RingBufferProcessor-" + ii,
-					this.fanOutBroadcasters.get(ii).getDispatcher()));
+					this.fanOutBroadcasters.get(ii)
+						.getDispatcher()));
 		}
 
 		return retVal;

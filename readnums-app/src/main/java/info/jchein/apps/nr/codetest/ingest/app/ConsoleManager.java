@@ -19,10 +19,10 @@ implements Runnable
    private final IConsole console;
 
    @NotNull
-	private final Codec<Buffer, MessageInput, MessageInput> codec;
+	private final Codec<Buffer, MessageInput, Object> codec;
 
    @NotNull
-	private final Subscriber<?> inputBroadcaster;
+	private final Subscriber<MessageInput> inputBroadcaster;
 
    @NotNull
    private final Consumer<Void> terminateAppConsumer;
@@ -30,8 +30,8 @@ implements Runnable
    
    ConsoleManager(
       @NotNull IConsole console,
-      @NotNull Codec<Buffer,MessageInput,MessageInput> codec,
-		@NotNull Subscriber<?> inputBroadcaster,
+      @NotNull Codec<Buffer, MessageInput, Object> codec,
+		@NotNull Subscriber<MessageInput> inputBroadcaster,
       @NotNull @Qualifier(Constants.TERMINATE_INGEST_APPLICATION) Consumer<Void> terminateAppConsumer
    ) {
       this.console = console;
@@ -60,8 +60,7 @@ implements Runnable
             }
             case NINE_DIGITS: {
                console.format("Forwarding %s as though it had been read from an open socket\n", input);
-					// TODO: REPAIR THIS
-					// inputBroadcaster.onNext(msg);
+					inputBroadcaster.onNext(msg);
                quitting = false;
             }
             case INVALID_INPUT: {

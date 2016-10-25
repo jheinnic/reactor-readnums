@@ -20,12 +20,17 @@ public enum LifecycleStage
    ACTIVE,
    
    /**
-    * The segment has suffered a disabling exceptional condition. The fault may or may not be recoverable. Resources
-    * are not necessarily released, and may not even be capable of aborting.  Segments at FAULT may given the benefit
-    * of the doubt during a shutdown until all other segments have reached a quiescent state.  AT that point, end user
-    * is given an option to manually accelerate shutdown. If no response is given, at timeout expiration the process
-    * stops--there is no transition to NOT_RESPONDING.
-    */
+	 * An attempt to initialize the segment failed. It was READY, but did not become ACTIVE.
+	 */
+	FAILED_TO_START,
+
+	/**
+	 * The segment has suffered a disabling exceptional condition. The fault may or may not be recoverable. Resources are
+	 * not necessarily released, and may not even be capable of aborting. Segments at FAULT may given the benefit of the
+	 * doubt during a shutdown until all other segments have reached a quiescent state. AT that point, end user is given
+	 * an option to manually accelerate shutdown. If no response is given, at timeout expiration the process stops--there
+	 * is no transition to NOT_RESPONDING.
+	 */
    //FAULT,
    
    /**
@@ -34,8 +39,13 @@ public enum LifecycleStage
    SHUTTING_DOWN,
    
    /**
-    * The segment has been signaled to abort immediately with no priority given to task completion.
-    */
+	 * The segment acknowledged the shutdown signal with an explicit failure signal
+	 */
+	ABORTED,
+
+	/**
+	 * The segment has been signaled to abort immediately with no priority given to task completion.
+	 */
    // ABORTING,
    
    /**
@@ -51,5 +61,5 @@ public enum LifecycleStage
    /**
     * The segment completed a graceful shutdown and is safely inert.
     */
-   GRACEFUL_SHUTDOWN  
+	GRACEFULLY_SHUTDOWN
 }

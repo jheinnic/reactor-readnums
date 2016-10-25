@@ -104,7 +104,9 @@ implements Callable<Boolean>
       stageLock.lock();
       try {
          long timeoutLeft = (timeoutNs > 0) ? timeoutNs : 1;
-         while (stage != LifecycleStage.GRACEFUL_SHUTDOWN && stage != LifecycleStage.CRASHED && timeoutLeft > 0) {
+			while (stage != LifecycleStage.GRACEFULLY_SHUTDOWN &&
+				stage != LifecycleStage.CRASHED && timeoutLeft > 0)
+			{
             if (timeoutNs > 0) {
                timeoutLeft = shutdownState.awaitNanos(timeoutLeft);
             } else {
@@ -112,7 +114,7 @@ implements Callable<Boolean>
             }
          }
          
-         return stage == LifecycleStage.GRACEFUL_SHUTDOWN;
+			return stage == LifecycleStage.GRACEFULLY_SHUTDOWN;
       } catch (InterruptedException e) {
          LOG.error("Thread interrupted while shutting down socket for " + channelStream.remoteAddress());
          Thread.interrupted();
@@ -160,7 +162,7 @@ implements Callable<Boolean>
       stageLock.lock();
       try {
          if (retVal == Boolean.TRUE) { 
-            stage = LifecycleStage.GRACEFUL_SHUTDOWN;
+				stage = LifecycleStage.GRACEFULLY_SHUTDOWN;
          } else {
             stage = LifecycleStage.CRASHED;
          }
@@ -310,134 +312,3 @@ implements Callable<Boolean>
       }
    }
 }   
-
-
-      /*
-   @Override
-   public boolean alive()
-   {
-      stageLock.lock();
-      try {
-         return stage == LifecycleStage.ACTIVE;
-      } finally {
-         stageLock.unlock();
-      }
-//      @SuppressWarnings("unchecked")
-//      final NettyChannelHandlerBridge<IN, OUT> handlerBridge =
-//         pipeline.get(NettyChannelHandlerBridge.class);
-//
-//      boolean retVal = true;
-//      if ((handlerBridge == null) || (handlerBridge.subscription() == null)) {
-//         retVal = false;
-//      }
-//
-//      return retVal;
-   }
-
-
-  
-   @Override
-   public void shutdown()
-   {
-      new Thread(this.runShutdown).start();
-   }
-
-
-   @Override
-   public boolean awaitAndShutdown()
-   {
-//      shutdown();
-//      
-//      LifecycleStage finalStage = null;
-//      this.stageLock.lock();
-//      try {
-//         finalStage = this.stage;
-//         while (finalStage != LifecycleStage.GRACEFUL_SHUTDOWN && finalStage != LifecycleStage.CRASHED) {
-//            try {
-//               this.shutdownState.await();
-//            } catch (InterruptedException e) {
-//               LOG.error("Could not confirm shutdown due to thread interruption");
-//               return false;
-//            }
-//            finalStage = this.stage;
-//         }
-//      } finally {
-//         this.stageLock.unlock();
-//      }
-//
-//      if (finalStage != LifecycleStage.GRACEFUL_SHUTDOWN) {
-//         LOG.error("Final state was {}, not GRACEFUL_SHUTDOWN", finalStage);
-//      }
-//
-//      return finalStage == LifecycleStage.GRACEFUL_SHUTDOWN;
-      return awaitAndShutdown(-1, null);
-   }
-
-
-   @Override
-   public boolean awaitAndShutdown(long timeout, TimeUnit timeUnit)
-   {
-      shutdown();
-
-      final long shutdownNanos;
-      if (timeout > 0) {
-         shutdownNanos = timeUnit.toNanos(timeout);
-      } else {
-         shutdownNanos = -1;
-      }
-      long nanosRemaining = shutdownNanos;
-
-      LifecycleStage finalStage = null;
-      this.stageLock.lock();
-      try {
-         finalStage = this.stage;
-         while (finalStage != LifecycleStage.GRACEFUL_SHUTDOWN && finalStage != LifecycleStage.CRASHED) {
-            try {
-               LOG.info("Before await on shutdownState, nanosRemaining={}", nanosRemaining);
-               nanosRemaining = this.shutdownState.awaitNanos(nanosRemaining);
-               LOG.info("After await on shutdownState, nanosRemaining={}", nanosRemaining);
-            } catch (InterruptedException e) {
-               LOG.error("Could not confirm shutdown due to thread interruption");
-               return false;
-            }
-            finalStage = this.stage;
-         }
-      } finally {
-         this.stageLock.unlock();
-      }
-
-      boolean retVal = true;
-      if (finalStage != LifecycleStage.GRACEFUL_SHUTDOWN) {
-         LOG.error("Final state was {}, not GRACEFUL_SHUTDOWN", finalStage);
-         retVal = false;
-      }
-
-      return retVal;
-   }
-
-
-   @Override
-   public void forceShutdown()
-   {
-      cancelSubscriptions();
-      
-      @SuppressWarnings("unchecked")
-      final NettyChannelHandlerBridge<IN, OUT> handlerBridge =
-         (NettyChannelHandlerBridge<IN, OUT>) pipeline.get(NettyChannelHandlerBridge.class);
-
-      if (handlerBridge != null) {
-         final Subscription subscription = handlerBridge.subscription();
-         if (subscription != null) {
-            subscription.cancel();
-         }
-      }
-      
-      try {
-         pipeline.disconnect();
-      } catch (Throwable e) {
-      }
-
-      stage = LifecycleStage.CRASHED;
-   }
-}
-   */////

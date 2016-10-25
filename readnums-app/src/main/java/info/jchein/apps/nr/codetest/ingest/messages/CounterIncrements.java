@@ -111,4 +111,12 @@ implements ICounterIncrements
 	{
 		return super.beforeRead();
 	}
+
+
+	@Override
+	public CounterIncrements finalizeAggregate()
+	{
+		super.afterWrite();
+		return super.beforeRead();
+	}
 }
